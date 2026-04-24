@@ -1,0 +1,36 @@
+## Visual Studio
+.vs/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## .NET
+[Dd]ebug/
+[Rr]elease/
+*.deps.json
+*.runtimeconfig.json
+*.pdb
+*.exe
+*.dll
+
+## Tools & IDEs
+.claude/
+.vscode/
+.idea/
+*.swp
+*.bak
+*.tmp
+
+## Project Specific (Temporary build artifacts)
+temp_build_verify*/
+
+## OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+## Logs
+*.log
