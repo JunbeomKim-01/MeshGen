@@ -17,6 +17,16 @@ public enum PipelineStepStatus
     Failed
 }
 
+public enum DeformationStepStatus
+{
+    Idle,
+    Aligning,
+    Extracting,
+    Deforming,
+    Validating,
+    Done
+}
+
 public enum RoiRole
 {
     Unknown,
@@ -328,6 +338,12 @@ public sealed class PipelineArtifacts
     public List<vtkPolyData> ElectrodeMeshes { get; } = new();
 
     public vtkPolyData? MergedPreview { get; set; }
+
+    public vtkPolyData? OriginalBodySurfaceBackup { get; set; }
+
+    public vtkPolyData? DeformedBodySurface { get; set; }
+
+    public ElasticAttachmentResult? AttachmentResult { get; set; }
 
     public PipelineStats Stats { get; set; } = new();
 }

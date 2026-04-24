@@ -13,7 +13,15 @@
     <PackageReference Include="fo-dicom" Version="5.1.1" />
     <PackageReference Include="Kitware.mummy.Runtime" Version="1.0.4" />
     <PackageReference Include="Kitware.VTK" Version="9.1.2022.222" />
+    <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="WPF-UI" Version="3.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="MeshGenLite.Tests\**\*.cs" />
+    <EmbeddedResource Remove="MeshGenLite.Tests\**\*" />
+    <None Remove="MeshGenLite.Tests\**\*" />
+    <Page Remove="MeshGenLite.Tests\**\*" />
   </ItemGroup>
 
 </Project>

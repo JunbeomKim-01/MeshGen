@@ -1,6 +1,7 @@
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using Kitware.VTK;
+using MeshGenLite.Engine.Geometry;
 using MeshGenLite.Models;
 using WpfColor = System.Windows.Media.Color;
 
@@ -11,17 +12,35 @@ public sealed class VtkViewportService
     private readonly Dictionary<int, vtkActor> roiActors = new();
     private readonly Dictionary<int, vtkPolyData> roiSurfaces = new();
     private readonly Dictionary<int, vtkActor> committedElectrodeActors = new();
+    private readonly Dictionary<int, vtkPolyData> committedElectrodeSurfaces = new();
+    private readonly HashSet<int> contactPatchVertexIds = new();
     private vtkActor? previewActor;
     private vtkActor? mergedPreviewActor;
     private vtkActor? externalActor;
     private vtkPolyData? externalSurface;
     private int? externalBodyMeshId;
+    private vtkActor? deformedBodyActor;
+    private vtkPolyDataMapper? deformedBodyMapper;
+    private vtkPolyData? originalBodySurfaceBackup;
+    private vtkPolyData? deformedBodySurface;
+    private vtkActor? contactPatchActor;
+    private vtkPolyDataMapper? contactPatchMapper;
+    private vtkPolyData? contactPatchPolyData;
+    private bool showContactPatch;
+    private bool showDeformedBody;
+    private bool externalOriginalVisibility = true;
     private RenderWindowControl? renderControl;
     private vtkRenderer? renderer;
 
     public bool IsInitialized => renderControl is not null && renderer is not null;
 
     public bool HasExternalSurface => externalActor is not null && externalSurface is not null;
+
+    public bool HasAttachmentVisualization => deformedBodySurface is not null;
+
+    public bool IsShowingDeformedBody => showDeformedBody && deformedBodySurface is not null;
+
+    public bool IsContactPatchVisible => showContactPatch && contactPatchActor is not null && contactPatchActor.GetVisibility() == 1;
 
     public int? ExternalBodyMeshId => externalBodyMeshId;
 
@@ -79,9 +98,11 @@ public sealed class VtkViewportService
             renderer.RemoveActor(mergedPreviewActor);
         }
 
+        ClearAttachmentVisuals();
         roiActors.Clear();
         roiSurfaces.Clear();
         committedElectrodeActors.Clear();
+        committedElectrodeSurfaces.Clear();
         previewActor = null;
         externalActor = null;
         externalSurface = null;
@@ -102,6 +123,7 @@ public sealed class VtkViewportService
             renderer.RemoveActor(actor);
         }
 
+        ClearAttachmentVisuals();
         roiActors.Clear();
         roiSurfaces.Clear();
         SetExternalSurfaceRoi(null);
@@ -143,6 +165,7 @@ public sealed class VtkViewportService
             externalActor = null;
             externalSurface = null;
             externalBodyMeshId = null;
+            externalOriginalVisibility = true;
             return;
         }
 
@@ -152,21 +175,143 @@ public sealed class VtkViewportService
             externalActor = actor;
             externalSurface = surface;
             externalBodyMeshId = resolvedId;
+            externalOriginalVisibility = actor.GetVisibility() == 1;
+            ApplyExternalVisibility();
             return;
         }
 
         externalActor = null;
         externalSurface = null;
         externalBodyMeshId = null;
+        externalOriginalVisibility = true;
     }
 
     public void UpdateRoiAppearance(RoiDescriptor roi)
     {
-        if (roiActors.TryGetValue(roi.Id, out var actor))
+        if (!roiActors.TryGetValue(roi.Id, out var actor))
         {
-            ApplyAppearance(actor, roi);
-            Render();
+            return;
         }
+
+        ApplyAppearance(actor, roi);
+        if (externalActor == actor)
+        {
+            externalOriginalVisibility = roi.Visibility;
+            ApplyExternalVisibility();
+            SyncDeformedAppearanceFromExternal();
+        }
+
+        Render();
+    }
+
+    public void ShowAttachmentResult(vtkPolyData originalBody, vtkPolyData deformedBody, IReadOnlyCollection<int> vertexIds)
+    {
+        if (renderer is null)
+        {
+            return;
+        }
+
+        originalBodySurfaceBackup = originalBody;
+        deformedBodySurface = deformedBody;
+        contactPatchVertexIds.Clear();
+        foreach (var vertexId in vertexIds)
+        {
+            contactPatchVertexIds.Add(vertexId);
+        }
+
+        if (deformedBodyActor is null)
+        {
+            deformedBodyActor = vtkActor.New();
+            deformedBodyActor.PickableOff();
+            renderer.AddActor(deformedBodyActor);
+        }
+
+        if (deformedBodyMapper is null)
+        {
+            deformedBodyMapper = vtkPolyDataMapper.New();
+            deformedBodyMapper.ScalarVisibilityOff();
+            deformedBodyActor.SetMapper(deformedBodyMapper);
+        }
+
+        deformedBodyMapper.SetInputData(deformedBody);
+        deformedBodyMapper.Update();
+        SyncDeformedAppearanceFromExternal();
+
+        showDeformedBody = true;
+        showContactPatch = true;
+        ApplyExternalVisibility();
+        RebuildContactPatchActor();
+        Render();
+    }
+
+    public void ClearAttachmentVisuals()
+    {
+        if (renderer is null)
+        {
+            originalBodySurfaceBackup = null;
+            deformedBodySurface = null;
+            showContactPatch = false;
+            showDeformedBody = false;
+            contactPatchVertexIds.Clear();
+            return;
+        }
+
+        if (deformedBodyActor is not null)
+        {
+            renderer.RemoveActor(deformedBodyActor);
+            deformedBodyActor = null;
+        }
+        deformedBodyMapper = null;
+
+        if (contactPatchActor is not null)
+        {
+            renderer.RemoveActor(contactPatchActor);
+            contactPatchActor = null;
+        }
+        contactPatchMapper = null;
+        contactPatchPolyData = null;
+
+        originalBodySurfaceBackup = null;
+        deformedBodySurface = null;
+        showContactPatch = false;
+        showDeformedBody = false;
+        contactPatchVertexIds.Clear();
+        ApplyExternalVisibility();
+        Render();
+    }
+
+    public void ShowContactPatch()
+    {
+        showContactPatch = true;
+        RebuildContactPatchActor();
+        Render();
+    }
+
+    public void HideContactPatch()
+    {
+        showContactPatch = false;
+        if (contactPatchActor is not null)
+        {
+            contactPatchActor.SetVisibility(0);
+        }
+
+        Render();
+    }
+
+    public void ShowDeformedBody()
+    {
+        showDeformedBody = true;
+        ApplyExternalVisibility();
+        RebuildContactPatchActor();
+        Render();
+    }
+
+    public void ShowOriginalBody()
+    {
+        showDeformedBody = false;
+        ApplyExternalVisibility();
+        RebuildContactPatchActor();
+        Render();
     }
 
     public void ShowPlacementPreview(vtkPolyData preview, WpfColor color, double opacity)
@@ -237,6 +382,7 @@ public sealed class VtkViewportService
         actor.SetMapper(mapper);
         renderer.AddActor(actor);
         committedElectrodeActors[placementId] = actor;
+        committedElectrodeSurfaces[placementId] = electrode;
 
         var property = actor.GetProperty();
         ApplyColor(property, color);
@@ -255,6 +401,7 @@ public sealed class VtkViewportService
 
         renderer.RemoveActor(actor);
         committedElectrodeActors.Remove(placementId);
+        committedElectrodeSurfaces.Remove(placementId);
         Render();
     }
 
@@ -271,8 +418,12 @@ public sealed class VtkViewportService
         }
 
         committedElectrodeActors.Clear();
+        committedElectrodeSurfaces.Clear();
         Render();
     }
+
+    public IReadOnlyCollection<vtkPolyData> GetCommittedElectrodeSurfaces()
+        => committedElectrodeSurfaces.Values;
 
     public void ShowElectrodes(IEnumerable<vtkPolyData> electrodes, WpfColor color)
     {
@@ -344,6 +495,90 @@ public sealed class VtkViewportService
         };
 
         return true;
+    }
+
+    private void SyncDeformedAppearanceFromExternal()
+    {
+        if (deformedBodyActor is null)
+        {
+            return;
+        }
+
+        if (externalActor is not null)
+        {
+            deformedBodyActor.GetProperty().DeepCopy(externalActor.GetProperty());
+        }
+        else
+        {
+            ApplyMaterialDefaults(deformedBodyActor.GetProperty());
+            deformedBodyActor.GetProperty().SetOpacity(0.95);
+        }
+
+        deformedBodyActor.GetProperty().Modified();
+    }
+
+    private void ApplyExternalVisibility()
+    {
+        if (externalActor is not null)
+        {
+            var shouldShowOriginal = deformedBodySurface is null || !showDeformedBody;
+            externalActor.SetVisibility(shouldShowOriginal && externalOriginalVisibility ? 1 : 0);
+        }
+
+        if (deformedBodyActor is not null)
+        {
+            deformedBodyActor.SetVisibility(showDeformedBody ? 1 : 0);
+        }
+    }
+
+    private void RebuildContactPatchActor()
+    {
+        if (renderer is null || !showContactPatch || contactPatchVertexIds.Count == 0)
+        {
+            if (contactPatchActor is not null)
+            {
+                contactPatchActor.SetVisibility(0);
+            }
+
+            return;
+        }
+
+        var source = showDeformedBody
+            ? deformedBodySurface
+            : originalBodySurfaceBackup ?? externalSurface;
+        if (source is null)
+        {
+            return;
+        }
+
+        contactPatchPolyData = MeshConverter.CreateVertexSubset(source, contactPatchVertexIds);
+
+        if (contactPatchActor is null)
+        {
+            contactPatchActor = vtkActor.New();
+            renderer.AddActor(contactPatchActor);
+        }
+
+        if (contactPatchMapper is null)
+        {
+            contactPatchMapper = vtkPolyDataMapper.New();
+            contactPatchMapper.ScalarVisibilityOff();
+            contactPatchActor.SetMapper(contactPatchMapper);
+        }
+
+        contactPatchMapper.SetInputData(contactPatchPolyData);
+        contactPatchMapper.Update();
+        contactPatchActor.SetVisibility(1);
+
+        var property = contactPatchActor.GetProperty();
+        property.SetColor(0.95, 0.2, 0.2);
+        property.SetOpacity(0.85);
+        property.SetRepresentationToSurface();
+        property.EdgeVisibilityOn();
+        property.SetEdgeColor(1.0, 0.9, 0.9);
+        property.SetAmbient(0.3);
+        property.SetDiffuse(0.9);
+        property.Modified();
     }
 
     private static Vector3D ResolvePickNormal(vtkCellPicker picker, vtkPolyData surface, long cellId, double[] pickedPosition)

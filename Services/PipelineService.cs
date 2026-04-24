@@ -18,7 +18,7 @@ public interface IPipelineService
 
     Task<vtkImageData> BuildLabelMapAsync(StudyContext study, IReadOnlyList<RoiDescriptor> selectedRois, double spacing, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<SurfaceMeshInfo>> BuildSurfaceAsync(StudyContext study, vtkImageData labelMap, IReadOnlyList<RoiDescriptor> selectedRois, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken);
+    Task<IReadOnlyList<SurfaceMeshInfo>> BuildSurfaceAsync(StudyContext study, vtkImageData labelMap, IReadOnlyList<RoiDescriptor> selectedRois, int externalSmoothingIterations, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<vtkPolyData>> CreateElectrodesAsync(ElectrodeSpec spec, IReadOnlyList<ElectrodePlacement> placements, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken);
 
@@ -185,7 +185,7 @@ public sealed class PipelineService : IPipelineService
         }, cancellationToken);
     }
 
-    public Task<IReadOnlyList<SurfaceMeshInfo>> BuildSurfaceAsync(StudyContext study, vtkImageData labelMap, IReadOnlyList<RoiDescriptor> selectedRois, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<SurfaceMeshInfo>> BuildSurfaceAsync(StudyContext study, vtkImageData labelMap, IReadOnlyList<RoiDescriptor> selectedRois, int externalSmoothingIterations, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken)
     {
         return Task.Run(() =>
         {
@@ -210,9 +210,14 @@ public sealed class PipelineService : IPipelineService
                 marchingCubes.GenerateValues(1, 1, 1);
                 marchingCubes.Update();
 
+                var isExternal = roi.Id == study.ExternalRoiId;
+                var smoothingIterations = isExternal
+                    ? Math.Max(externalSmoothingIterations, 0)
+                    : 10;
+
                 var smoother = vtkWindowedSincPolyDataFilter.New();
                 smoother.SetInputConnection(marchingCubes.GetOutputPort());
-                smoother.SetNumberOfIterations(10);
+                smoother.SetNumberOfIterations(smoothingIterations);
                 smoother.BoundarySmoothingOff();
                 smoother.FeatureEdgeSmoothingOff();
                 smoother.SetPassBand(0.15);

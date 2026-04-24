@@ -295,13 +295,16 @@
                                 Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1">
-                            <StackPanel>
-                                <StackPanel Orientation="Horizontal">
-                                    <ui:SymbolIcon Symbol="Organization24" FontSize="18" Foreground="{StaticResource BrandAccentBrush}" />
-                                    <TextBlock Text="Step 2-3 · ROI Control"
-                                               Style="{StaticResource SectionHeaderTextStyle}"
-                                               Margin="8,0,0,0" />
-                                </StackPanel>
+                            <Expander IsExpanded="True">
+                                <Expander.Header>
+                                    <StackPanel Orientation="Horizontal">
+                                        <ui:SymbolIcon Symbol="Organization24" FontSize="18" Foreground="{StaticResource BrandAccentBrush}" />
+                                        <TextBlock Text="Step 2-3 · ROI Control"
+                                                   Style="{StaticResource SectionHeaderTextStyle}"
+                                                   Margin="8,0,0,0" />
+                                    </StackPanel>
+                                </Expander.Header>
+                                <StackPanel Margin="0,10,0,0">
                                 <TextBlock Text="Select external ROI and toggle individual surfaces."
                                            Style="{StaticResource SectionCaptionTextStyle}" />
 
@@ -309,6 +312,12 @@
                                 <ComboBox ItemsSource="{Binding RoiPanel.ExternalCandidates}"
                                           SelectedItem="{Binding RoiPanel.SelectedExternalRoi}"
                                           DisplayMemberPath="Name" />
+
+                                <TextBlock Text="External Smoothing Iterations" Style="{StaticResource FieldLabelTextStyle}" />
+                                <ui:TextBox Text="{Binding RoiPanel.ExternalSmoothingIterations, UpdateSourceTrigger=PropertyChanged}"
+                                            Width="140"
+                                            HorizontalAlignment="Left"
+                                            PlaceholderText="20" />
 
                                 <ListBox ItemsSource="{Binding RoiPanel.Rois}"
                                          Margin="0,14,0,0"
@@ -372,7 +381,8 @@
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
-                            </StackPanel>
+                                </StackPanel>
+                            </Expander>
                         </Border>
 
                         <Border CornerRadius="10"
@@ -384,7 +394,7 @@
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal">
                                     <ui:SymbolIcon Symbol="CircleSmall24" FontSize="18" Foreground="{StaticResource BrandAccentBrush}" />
-                                    <TextBlock Text="Step 4-6 · Electrode Placement"
+                                    <TextBlock Text="Step 4-5 · Electrode Placement"
                                                Style="{StaticResource SectionHeaderTextStyle}"
                                                Margin="8,0,0,0" />
                                 </StackPanel>
@@ -476,28 +486,153 @@
 
                         <Border CornerRadius="10"
                                 Padding="16"
+                                Margin="0,0,0,14"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                BorderThickness="1">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <ui:SymbolIcon Symbol="ScanCamera24" FontSize="18" Foreground="{StaticResource BrandAccentBrush}" />
+                                    <TextBlock Text="Step 6 · Attachment"
+                                               Style="{StaticResource SectionHeaderTextStyle}"
+                                               Margin="8,0,0,0" />
+                                </StackPanel>
+                                <TextBlock Text="Run sequential elastic attachment for all placed electrodes, then inspect patch and body toggles."
+                                           Style="{StaticResource SectionCaptionTextStyle}" />
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Contact Threshold (mm)" Style="{StaticResource FieldLabelTextStyle}" />
+                                        <ui:TextBox Text="{Binding DeformationConfig.ContactDistanceThreshold, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Expansion Rings" Style="{StaticResource FieldLabelTextStyle}" />
+                                        <ui:TextBox Text="{Binding DeformationConfig.ContactExpansionRing, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Smooth Iterations" Style="{StaticResource FieldLabelTextStyle}" />
+                                        <ui:TextBox Text="{Binding DeformationConfig.SmoothingIterations, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Hard Weight" Style="{StaticResource FieldLabelTextStyle}" />
+                                        <ui:TextBox Text="{Binding DeformationConfig.HardConstraintWeight, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="Soft Weight" Style="{StaticResource FieldLabelTextStyle}" />
+                                        <ui:TextBox Text="{Binding DeformationConfig.SoftConstraintWeight, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <WrapPanel Margin="0,12,0,0">
+                                    <ui:Button Command="{Binding AttachElectrodesCommand}"
+                                               Content="Attach All Electrodes"
+                                               Icon="{ui:SymbolIcon Play24}"
+                                               Appearance="Primary"
+                                               Margin="0,0,6,6" />
+                                    <ui:Button Command="{Binding ToggleContactPatchCommand}"
+                                               Content="{Binding Attachment.ContactPatchButtonText}"
+                                               Icon="{ui:SymbolIcon Highlight24}"
+                                               Appearance="Secondary"
+                                               Margin="0,0,6,6" />
+                                    <ui:Button Command="{Binding ToggleBodyViewCommand}"
+                                               Content="{Binding Attachment.BodyViewButtonText}"
+                                               Icon="{ui:SymbolIcon ArrowSwap24}"
+                                               Appearance="Secondary"
+                                               Margin="0,0,6,6" />
+                                </WrapPanel>
+
+                                <Border Margin="0,10,0,0"
+                                        Padding="8,2"
+                                        Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                                        CornerRadius="8"
+                                        HorizontalAlignment="Left">
+                                    <TextBlock Text="{Binding Attachment.StatusText}"
+                                               FontSize="10"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </Border>
+
+                                <TextBlock Text="{Binding Attachment.Summary}"
+                                           Style="{StaticResource MutedTextStyle}"
+                                           Margin="0,10,0,0"
+                                           TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Attachment.QualitySummary}"
+                                           Style="{StaticResource MutedTextStyle}"
+                                           Margin="0,6,0,0"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border CornerRadius="10"
+                                Padding="16"
                                 Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
                                 BorderThickness="1">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal">
                                     <ui:SymbolIcon Symbol="CubeMultiple24" FontSize="18" Foreground="{StaticResource BrandAccentBrush}" />
-                                    <TextBlock Text="Step 7 · Volume Mesh"
+                                    <TextBlock Text="Step 7 · Volume Mesh &amp; Export"
                                                Style="{StaticResource SectionHeaderTextStyle}"
                                                Margin="8,0,0,0" />
                                 </StackPanel>
-                                <Border Margin="0,6,0,10"
-                                        Padding="8,2"
-                                        Background="{DynamicResource SystemFillColorCautionBackgroundBrush}"
-                                        CornerRadius="8"
-                                        HorizontalAlignment="Left">
-                                    <TextBlock Text="PENDING"
-                                               FontSize="10"
-                                               FontWeight="SemiBold"
-                                               Foreground="{StaticResource BrandWarningBrush}" />
-                                </Border>
-                                <TextBlock Text="{Binding VolumeMeshSummary}"
-                                           Style="{StaticResource MutedTextStyle}" />
+                                <TextBlock Text="Generate a tetrahedral mesh (Delaunay3D) from the final surface, or export the surface to STL / POLY."
+                                           Style="{StaticResource SectionCaptionTextStyle}" />
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Alpha (mm · 0 = hull)" Style="{StaticResource FieldLabelTextStyle}" />
+                                        <ui:TextBox Text="{Binding VolumeMesh.AlphaMm, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="0" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Max Points (0 = no decimation)" Style="{StaticResource FieldLabelTextStyle}" />
+                                        <ui:TextBox Text="{Binding VolumeMesh.MaxPoints, UpdateSourceTrigger=PropertyChanged}"
+                                                    PlaceholderText="5000" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <WrapPanel Margin="0,12,0,0">
+                                    <ui:Button Command="{Binding GenerateVolumeMeshCommand}"
+                                               Content="Generate Volume Mesh"
+                                               Icon="{ui:SymbolIcon CubeTree24}"
+                                               Appearance="Primary"
+                                               Margin="0,0,6,6" />
+                                    <ui:Button Command="{Binding ExportStlCommand}"
+                                               Content="Export STL"
+                                               Icon="{ui:SymbolIcon Save24}"
+                                               Appearance="Secondary"
+                                               Margin="0,0,6,6" />
+                                    <ui:Button Command="{Binding ExportPolyCommand}"
+                                               Content="Export POLY"
+                                               Icon="{ui:SymbolIcon Save24}"
+                                               Appearance="Secondary"
+                                               Margin="0,0,6,6" />
+                                </WrapPanel>
+
+                                <TextBlock Text="{Binding VolumeMesh.Summary}"
+                                           Style="{StaticResource MutedTextStyle}"
+                                           Margin="0,10,0,0"
+                                           TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
