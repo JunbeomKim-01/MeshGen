@@ -107,6 +107,40 @@ public sealed class HeuristicAttachmentEngine
         
         var deformedBody = surfaceDeformer.Deform(bodyMesh, constraints, config);
 
+        // --- Step: Final Penetration Resolution (Phase 4 of heuristic design) ---
+        // Laplacian smoothing might not fully resolve deep penetrations due to mesh stiffness.
+        // If the deformed body still penetrates the electrode, push the electrode outward.
+        var finalMaxPenetration = 0.0f;
+        var deformedBodyTree = new KdTree(deformedBody.Vertices);
+        
+        foreach (var v in alignedElectrode.Vertices)
+        {
+            var nearestId = deformedBodyTree.FindNearest(v);
+            if (nearestId >= 0)
+            {
+                var bodyVertex = deformedBody.Vertices[nearestId];
+                var bodyNormal = deformedBody.HasNormals ? deformedBody.Normals![nearestId] : Vector3.UnitZ;
+                bodyNormal = bodyNormal.LengthSquared() <= 1e-8f ? Vector3.UnitZ : Vector3.Normalize(bodyNormal);
+                
+                // signedDistance < 0 means the electrode vertex is inside the body.
+                var signedDistance = Vector3.Dot(v - bodyVertex, bodyNormal);
+                if (signedDistance < 0)
+                {
+                    finalMaxPenetration = Math.Max(finalMaxPenetration, -signedDistance);
+                }
+            }
+        }
+
+        if (finalMaxPenetration > 0)
+        {
+            // Push electrode completely out of the body surface
+            var finalPush = outwardDirection * (finalMaxPenetration + parameters.MinimumClearanceMm);
+            for (var i = 0; i < alignedElectrode.Vertices.Count; i++)
+            {
+                alignedElectrode.Vertices[i] += finalPush;
+            }
+        }
+
         var finalReport = qualityEvaluator.Evaluate(alignedElectrode, deformedBody, transformedSamples);
 
         session.AlignedElectrodeMesh = alignedElectrode;

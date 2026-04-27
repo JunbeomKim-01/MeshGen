@@ -29,8 +29,16 @@ public sealed class ContactPatchExtractor : IContactPatchExtractor
                 continue;
             }
 
-            var distance = Vector3.Distance(bodyMesh.Vertices[nearestId], electrodeVertex);
-            if (distance <= options.DistanceThresholdMm)
+            var bodyVertex = bodyMesh.Vertices[nearestId];
+            var distance = Vector3.Distance(bodyVertex, electrodeVertex);
+            
+            // underside.CapNormal points from the electrode towards the body.
+            // If the dot product of (bodyVertex - electrodeVertex) and CapNormal is negative,
+            // it means the body vertex is "behind" the electrode's bottom face, indicating penetration.
+            var vectorToBody = bodyVertex - electrodeVertex;
+            var isPenetrating = Vector3.Dot(vectorToBody, underside.CapNormal) < 0;
+
+            if (isPenetrating || distance <= options.DistanceThresholdMm)
             {
                 initial.Add(nearestId);
             }

@@ -32,7 +32,13 @@ public sealed class ConstraintBuilder : IConstraintBuilder
         foreach (var vertexId in contactPatch.VertexIds.Where(vertexId => vertexId >= 0 && vertexId < bodyMesh.Vertices.Count))
         {
             var current = bodyMesh.Vertices[vertexId];
-            var target = FindNearestTarget(undersideTree, undersidePoints, current);
+            var nearestElectrodeVertex = FindNearestTarget(undersideTree, undersidePoints, current);
+            
+            // Prevent lateral sliding by only displacing along the electrode's normal axis.
+            // This projects the nearest point's depth onto the current vertex's position.
+            var depthDifference = Vector3.Dot(nearestElectrodeVertex - current, underside.CapNormal);
+            var target = current + (depthDifference * underside.CapNormal);
+
             totalDisplacement += target - current;
             constraints.Add(new ConstraintPoint
             {

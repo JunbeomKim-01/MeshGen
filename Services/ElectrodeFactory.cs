@@ -40,8 +40,19 @@ public sealed class ElectrodeFactory
 
         append.Update();
 
+        // Convert all cell types (quads, polygons) to triangles before subdivision
+        var globalTriangleFilter = vtkTriangleFilter.New();
+        globalTriangleFilter.SetInputConnection(append.GetOutputPort());
+        globalTriangleFilter.Update();
+
+        // Apply Linear Subdivision to create dense internal vertices on the faces.
+        var subdivide = vtkLinearSubdivisionFilter.New();
+        subdivide.SetInputConnection(globalTriangleFilter.GetOutputPort());
+        subdivide.SetNumberOfSubdivisions(2); // Subdivide twice for dense points
+        subdivide.Update();
+
         var combined = vtkPolyData.New();
-        combined.DeepCopy(append.GetOutput());
+        combined.DeepCopy(subdivide.GetOutput());
         return combined;
     }
 
