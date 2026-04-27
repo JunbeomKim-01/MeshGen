@@ -149,23 +149,34 @@ public sealed class RoiPanelViewModel : ObservableObject
 
 public sealed class ElectrodePanelViewModel : ObservableObject
 {
-    private string colorHex = "#60CDFF";
     private PlacementMode placementMode;
     private ElectrodePlacement? selectedPlacement;
+    private ElectrodeLayer? selectedLayer;
 
     public ElectrodePanelViewModel(ObservableCollection<ElectrodePlacement> placements)
     {
         Placements = placements;
+        ShapeOptions = (ElectrodeShape[])Enum.GetValues(typeof(ElectrodeShape));
+        SelectedLayer = Spec.Layers.FirstOrDefault();
+        Spec.Layers.CollectionChanged += (_, _) =>
+        {
+            if (SelectedLayer is null || !Spec.Layers.Contains(SelectedLayer))
+            {
+                SelectedLayer = Spec.Layers.FirstOrDefault();
+            }
+        };
     }
 
     public ElectrodeSpec Spec { get; } = new();
 
     public ObservableCollection<ElectrodePlacement> Placements { get; }
 
-    public string ColorHex
+    public IReadOnlyList<ElectrodeShape> ShapeOptions { get; }
+
+    public ElectrodeLayer? SelectedLayer
     {
-        get => colorHex;
-        set => SetProperty(ref colorHex, value);
+        get => selectedLayer;
+        set => SetProperty(ref selectedLayer, value);
     }
 
     public PlacementMode PlacementMode
@@ -202,6 +213,7 @@ public sealed class DeformationConfigViewModel : ObservableObject
     private string smoothingIterations = "2";
     private string contactDistanceThreshold = "2.0";
     private string contactExpansionRing = "2";
+    private string externalIndentationDepth = "1.0";
     private string softConstraintWeight = "0.35";
     private string hardConstraintWeight = "8.0";
 
@@ -223,6 +235,12 @@ public sealed class DeformationConfigViewModel : ObservableObject
         set => SetProperty(ref contactExpansionRing, value);
     }
 
+    public string ExternalIndentationDepth
+    {
+        get => externalIndentationDepth;
+        set => SetProperty(ref externalIndentationDepth, value);
+    }
+
     public string SoftConstraintWeight
     {
         get => softConstraintWeight;
@@ -242,6 +260,7 @@ public sealed class DeformationConfigViewModel : ObservableObject
             SmoothingIterations = ParseInt(SmoothingIterations, 2),
             ContactDistanceThresholdMm = ParseDouble(ContactDistanceThreshold, 2.0),
             ContactExpansionRing = ParseInt(ContactExpansionRing, 2),
+            ExternalIndentationDepthMm = ParseDouble(ExternalIndentationDepth, 1.0),
             SoftConstraintWeight = ParseDouble(SoftConstraintWeight, 0.35),
             HardConstraintWeight = ParseDouble(HardConstraintWeight, 8.0)
         };
@@ -473,6 +492,11 @@ public sealed class ShellViewModel : ObservableObject
         GenerateVolumeMeshCommand = new AsyncRelayCommand(GenerateVolumeMeshAsync, CanGenerateVolumeMesh);
         ExportStlCommand = new RelayCommand(ExportStl, CanExportSurface);
         ExportPolyCommand = new RelayCommand(ExportPoly, CanExportSurface);
+        AddElectrodeLayerCommand = new RelayCommand(AddElectrodeLayer);
+        RemoveElectrodeLayerCommand = new RelayCommand<ElectrodeLayer>(RemoveElectrodeLayer, layer => layer is not null && ElectrodePanel.Spec.Layers.Count > 1);
+        MoveLayerUpCommand = new RelayCommand<ElectrodeLayer>(layer => MoveLayer(layer, -1), layer => layer is not null && ElectrodePanel.Spec.Layers.IndexOf(layer) > 0);
+        MoveLayerDownCommand = new RelayCommand<ElectrodeLayer>(layer => MoveLayer(layer, 1), layer => layer is not null && ElectrodePanel.Spec.Layers.IndexOf(layer) >= 0 && ElectrodePanel.Spec.Layers.IndexOf(layer) < ElectrodePanel.Spec.Layers.Count - 1);
+        ResetElectrodeLayersCommand = new RelayCommand(() => ElectrodePanel.Spec.ResetToDefault());
     }
 
     public ImportViewModel Import { get; }
@@ -523,6 +547,16 @@ public sealed class ShellViewModel : ObservableObject
 
     public ICommand ExportPolyCommand { get; }
 
+    public ICommand AddElectrodeLayerCommand { get; }
+
+    public ICommand RemoveElectrodeLayerCommand { get; }
+
+    public ICommand MoveLayerUpCommand { get; }
+
+    public ICommand MoveLayerDownCommand { get; }
+
+    public ICommand ResetElectrodeLayersCommand { get; }
+
     public void InitializeViewport(RenderWindowControl control)
     {
         viewportService.Initialize(control);
@@ -536,7 +570,6 @@ public sealed class ShellViewModel : ObservableObject
             return;
         }
 
-        ApplyElectrodeColor();
         if (placementController.UpdatePreview(x, y, ElectrodePanel.Spec, ElectrodePanel.Spec.Color))
         {
             var hit = placementController.CurrentHit;
@@ -571,7 +604,6 @@ public sealed class ShellViewModel : ObservableObject
             return;
         }
 
-        ApplyElectrodeColor();
         if (!placementController.HasPreview)
         {
             placementController.UpdatePreview(x, y, ElectrodePanel.Spec, ElectrodePanel.Spec.Color);
@@ -742,7 +774,6 @@ public sealed class ShellViewModel : ObservableObject
 
         await RunTrackedAsync(async token =>
         {
-            ApplyElectrodeColor();
             SetStep(5, PipelineStepStatus.Running);
             Attachment.Status = DeformationStepStatus.Aligning;
             Attachment.Summary = $"Attaching {electrodeRepository.Placements.Count} electrode(s) to the selected body surface.";
@@ -771,6 +802,17 @@ public sealed class ShellViewModel : ObservableObject
                 ? null
                 : MeshConverter.ToVtkPolyData(result.FinalBodyMesh);
 
+            var layerColors = electrodeFactory.GetLayerColors(ElectrodePanel.Spec);
+            foreach (var attachedElectrode in result.DeformedElectrodeMeshes.OrderBy(pair => pair.Key))
+            {
+                viewportService.AddCommittedElectrode(
+                    attachedElectrode.Key,
+                    MeshConverter.ToVtkPolyData(attachedElectrode.Value),
+                    ElectrodePanel.Spec.Color,
+                    1.0,
+                    layerColors);
+            }
+
             if (artifacts.OriginalBodySurfaceBackup is not null && artifacts.DeformedBodySurface is not null)
             {
                 viewportService.ShowAttachmentResult(
@@ -782,7 +824,7 @@ public sealed class ShellViewModel : ObservableObject
             Attachment.Status = DeformationStepStatus.Done;
             Attachment.IsContactPatchVisible = true;
             Attachment.IsShowingDeformedBody = true;
-            Attachment.Summary = $"{result.PerElectrodeSessions.Count} electrodes attached with sequential Laplacian deformation.";
+            Attachment.Summary = $"{result.PerElectrodeSessions.Count} electrodes attached; External surface indented under each footprint.";
             Attachment.QualitySummary = result.AggregateQualityReport?.Summary ?? "Attachment completed without quality details.";
             SetStep(5, PipelineStepStatus.Completed);
             SetStep(6, PipelineStepStatus.Ready);
@@ -1129,7 +1171,6 @@ public sealed class ShellViewModel : ObservableObject
             return;
         }
 
-        ApplyElectrodeColor();
         placementController.BeginPlacement();
         ElectrodePanel.PlacementMode = PlacementMode.ElectrodePlacement;
         SetStep(3, PipelineStepStatus.Completed);
@@ -1266,18 +1307,49 @@ public sealed class ShellViewModel : ObservableObject
         }
     }
 
-    private void ApplyElectrodeColor()
-    {
-        if (WpfColorConverter.ConvertFromString(ElectrodePanel.ColorHex) is WpfColor color)
-        {
-            ElectrodePanel.Spec.Color = color;
-        }
-    }
-
     private bool CanAttachElectrodes()
         => artifacts.ExternalSurface is not null &&
            electrodeRepository.Placements.Count > 0 &&
            !StatusBar.IsBusy;
+
+    private void AddElectrodeLayer()
+    {
+        var layer = ElectrodeLayerPresets.CreateBlankLayer(ElectrodePanel.Spec.Layers.Count);
+        ElectrodePanel.Spec.Layers.Add(layer);
+        ElectrodePanel.SelectedLayer = layer;
+        RefreshCommandStates();
+    }
+
+    private void RemoveElectrodeLayer(ElectrodeLayer? layer)
+    {
+        if (layer is null || ElectrodePanel.Spec.Layers.Count <= 1)
+        {
+            return;
+        }
+
+        ElectrodePanel.Spec.Layers.Remove(layer);
+        RefreshCommandStates();
+    }
+
+    private void MoveLayer(ElectrodeLayer? layer, int direction)
+    {
+        if (layer is null)
+        {
+            return;
+        }
+
+        var layers = ElectrodePanel.Spec.Layers;
+        var index = layers.IndexOf(layer);
+        var target = index + direction;
+        if (index < 0 || target < 0 || target >= layers.Count)
+        {
+            return;
+        }
+
+        layers.Move(index, target);
+        ElectrodePanel.SelectedLayer = layer;
+        RefreshCommandStates();
+    }
 
     private void UpdatePlacementAndAttachmentSteps()
     {
@@ -1360,6 +1432,11 @@ public sealed class ShellViewModel : ObservableObject
         Notify(GenerateVolumeMeshCommand);
         Notify(ExportStlCommand);
         Notify(ExportPolyCommand);
+        Notify(AddElectrodeLayerCommand);
+        Notify(RemoveElectrodeLayerCommand);
+        Notify(MoveLayerUpCommand);
+        Notify(MoveLayerDownCommand);
+        Notify(ResetElectrodeLayersCommand);
     }
 
     private static void Notify(ICommand command)
@@ -1371,6 +1448,9 @@ public sealed class ShellViewModel : ObservableObject
                 break;
             case AsyncRelayCommand asyncRelay:
                 asyncRelay.NotifyCanExecuteChanged();
+                break;
+            case RelayCommand<ElectrodeLayer> layerRelay:
+                layerRelay.NotifyCanExecuteChanged();
                 break;
         }
     }

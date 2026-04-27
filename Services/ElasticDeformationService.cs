@@ -1,7 +1,7 @@
+using System.Numerics;
 using Kitware.VTK;
 using MeshGenLite.Engine;
 using MeshGenLite.Engine.Geometry;
-using MeshGenLite.Engine.Interfaces;
 using MeshGenLite.Models;
 
 namespace MeshGenLite.Services;
@@ -33,11 +33,11 @@ public sealed class ElasticDeformationService : IElasticDeformationService
         var bodyMesh = MeshConverter.FromVtkPolyData(bodySurface);
         var placementSnapshot = placements.OrderBy(placement => placement.Id).ToList();
         return await Task.Run(
-            async () => await AttachCoreAsync(bodyMesh, spec, placementSnapshot, config, progress, cancellationToken),
+            () => AttachCore(bodyMesh, spec, placementSnapshot, config, progress, cancellationToken),
             cancellationToken);
     }
 
-    private async Task<ElasticAttachmentResult> AttachCoreAsync(
+    private ElasticAttachmentResult AttachCore(
         MeshData originalBodyMesh,
         ElectrodeSpec spec,
         IReadOnlyList<ElectrodePlacement> placements,
@@ -51,58 +51,48 @@ public sealed class ElasticDeformationService : IElasticDeformationService
         }
 
         config ??= new ElasticEngineConfig();
-        var currentBodyMesh = originalBodyMesh.DeepCopy();
+        var bodyMesh = originalBodyMesh.DeepCopy();
         var result = new ElasticAttachmentResult
         {
             OriginalBodyMesh = originalBodyMesh.DeepCopy()
         };
         var unionPatch = new HashSet<int>();
         var reports = new List<DeformationQualityReport>();
-        var isFirstElectrode = true;
-
+        var heuristicEngine = new MeshGenLite.Engine.Heuristics.HeuristicAttachmentEngine();
+        
         foreach (var placement in placements)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(new PipelineProgress
             {
-                Message = $"Attaching electrode {placement.Id}",
-                Detail = "Preprocess"
+                Message = $"Pressing electrode {placement.Id}",
+                Detail = "Building electrode mesh"
             });
 
+            var bodyBeforePass = bodyMesh.DeepCopy();
             var electrodeMesh = BuildElectrodeMesh(spec, placement);
-            var engine = CreateEngine();
-            engine.Configure(config);
-            engine.SetBodyMesh(currentBodyMesh);
-            engine.SetElectrodeMesh(electrodeMesh);
-
-            var stageProgress = new Progress<string>(detail =>
+            
+            progress?.Report(new PipelineProgress
             {
-                progress?.Report(new PipelineProgress
-                {
-                    Message = $"Attaching electrode {placement.Id}",
-                    Detail = detail
-                });
+                Message = $"Pressing electrode {placement.Id}",
+                Detail = "Applying Heuristic Attachment Algorithm"
             });
 
-            if (isFirstElectrode)
+            // Convert ElasticEngineConfig to AttachmentParameters
+            var heuristicParams = new MeshGenLite.Models.AttachmentParameters
             {
-                await engine.PreprocessBodyMeshAsync(stageProgress, cancellationToken);
-                isFirstElectrode = false;
-            }
-            else
-            {
-                ((IProgress<string>)stageProgress).Report("Reusing preprocessed body mesh");
-                engine.SetPreprocessedBodyMesh(currentBodyMesh);
-            }
-            await engine.AlignElectrodeRigidAsync(stageProgress, cancellationToken);
-            await engine.ExtractContactPatchAsync(stageProgress, cancellationToken);
-            await engine.BuildConstraintsAsync(stageProgress, cancellationToken);
-            await engine.DeformSurfaceAsync(stageProgress, cancellationToken);
-            await engine.ValidateResultAsync(stageProgress, cancellationToken);
+                ContactThresholdMm = (float)config.ContactDistanceThresholdMm,
+                ExpansionRings = config.ContactExpansionRing,
+                HardWeight = (float)config.HardConstraintWeight,
+                SoftWeight = (float)config.SoftConstraintWeight
+            };
 
-            var session = engine.GetSession();
+            var session = heuristicEngine.Attach(bodyMesh, electrodeMesh, heuristicParams);
             session.ElectrodeId = placement.Id;
+            bodyMesh = session.DeformedBodyMesh ?? bodyMesh;
+            
             result.PerElectrodeSessions.Add(session);
+            result.DeformedElectrodeMeshes[placement.Id] = session.AlignedElectrodeMesh?.DeepCopy() ?? electrodeMesh;
             if (session.ContactPatch is not null)
             {
                 foreach (var vertexId in session.ContactPatch.VertexIds)
@@ -115,32 +105,19 @@ public sealed class ElasticDeformationService : IElasticDeformationService
             {
                 reports.Add(session.QualityReport);
             }
-
-            currentBodyMesh = session.DeformedBodyMesh?.DeepCopy() ?? currentBodyMesh;
         }
 
-        result.FinalBodyMesh = currentBodyMesh;
+        result.FinalBodyMesh = bodyMesh.DeepCopy();
         result.UnionContactPatchVertexIds.AddRange(unionPatch.OrderBy(id => id));
         result.AggregateQualityReport = DeformationQualityReport.AggregateWorstCase(reports);
 
         progress?.Report(new PipelineProgress
         {
             Message = "Attachment complete",
-            Detail = result.AggregateQualityReport?.Summary ?? "No quality report"
+            Detail = result.AggregateQualityReport?.Summary ?? "External surface indented by electrodes"
         });
 
         return result;
-    }
-
-    private IBodyMeshElasticEngine CreateEngine()
-    {
-        return new BodyMeshElasticEngine(
-            new BodyMeshPreprocessor(),
-            new ElectrodeRigidAligner(),
-            new ContactPatchExtractor(),
-            new ConstraintBuilder(),
-            new LaplacianSurfaceDeformer(),
-            new MeshQualityValidator());
     }
 
     private MeshData BuildElectrodeMesh(ElectrodeSpec spec, ElectrodePlacement placement)
@@ -157,4 +134,7 @@ public sealed class ElasticDeformationService : IElasticDeformationService
         worldMesh.DeepCopy(filter.GetOutput());
         return MeshConverter.FromVtkPolyData(worldMesh);
     }
+
+    private static Vector3 ToVector3(System.Windows.Media.Media3D.Vector3D vector)
+        => new((float)vector.X, (float)vector.Y, (float)vector.Z);
 }

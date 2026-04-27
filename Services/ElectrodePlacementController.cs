@@ -69,9 +69,10 @@ public sealed class ElectrodePlacementController
         var transform = transformBuilder.BuildTransform(hit.Position, hit.Normal, DefaultClearance);
         var worldMesh = ApplyTransform(localMesh, transform);
         var worldPosition = hit.Position + (hit.Normal * DefaultClearance);
+        var layerColors = electrodeFactory.GetLayerColors(spec);
 
         currentPreview = new PreviewState(hit, worldMesh, worldPosition);
-        viewportService.ShowPlacementPreview(worldMesh, color, 0.35);
+        viewportService.ShowPlacementPreview(worldMesh, color, 0.65, layerColors);
         return true;
     }
 
@@ -89,7 +90,7 @@ public sealed class ElectrodePlacementController
             DefaultClearance,
             currentPreview.WorldPosition);
 
-        viewportService.AddCommittedElectrode(placement.Id, currentPreview.WorldMesh, color, 0.85);
+        viewportService.AddCommittedElectrode(placement.Id, currentPreview.WorldMesh, color, 1.0, electrodeFactory.GetLayerColors(spec));
         viewportService.HidePlacementPreview();
         currentPreview = null;
         return placement;

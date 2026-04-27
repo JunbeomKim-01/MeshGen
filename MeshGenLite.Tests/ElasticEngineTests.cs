@@ -208,6 +208,64 @@ public sealed class ElasticEngineTests
         Assert.NotNull(session.QualityReport);
     }
 
+    [Fact]
+    public void ElectrodeSurfaceConformer_PressesElectrodeToPlaneWithoutMovingBody()
+    {
+        var body = CreatePlaneMesh(8, 8, 1.0f);
+        var bodyBefore = body.Vertices.ToArray();
+        var electrode = CreateCylinderElectrodeMesh(
+            radius: 1.4f,
+            height: 1.0f,
+            segments: 32,
+            center: new Vector3(3.5f, 3.5f, 0.75f));
+
+        var conformer = new ElectrodeSurfaceConformer();
+        var result = conformer.Conform(body, electrode, new ElasticEngineConfig
+        {
+            ElectrodeAttachmentClearanceMm = 0.0
+        });
+        var originalThickness = electrode.Vertices.Max(vertex => vertex.Z) - electrode.Vertices.Min(vertex => vertex.Z);
+        var attachedThickness = result.ElectrodeMesh.Vertices.Max(vertex => vertex.Z) - result.ElectrodeMesh.Vertices.Min(vertex => vertex.Z);
+
+        Assert.Equal(bodyBefore, body.Vertices);
+        Assert.True(electrode.Vertices.Min(vertex => vertex.Z) > 0.2f);
+        Assert.True(result.ElectrodeMesh.Vertices.Min(vertex => vertex.Z) < 0.05f);
+        Assert.True(result.ElectrodeMesh.Vertices.Max(vertex => vertex.Z) < 1.05f);
+        Assert.True(Math.Abs(attachedThickness - originalThickness) < 0.05f);
+        Assert.True(result.QualityReport.MaxDisplacement > 0.2);
+        Assert.True(result.QualityReport.MeanResidualGap < 0.05);
+    }
+
+    [Fact]
+    public void BodySurfaceIndentationDeformer_PressesPatchInward()
+    {
+        var body = CreatePlaneMesh(9, 9, 1.0f);
+        var electrode = CreateCylinderElectrodeMesh(
+            radius: 1.4f,
+            height: 1.0f,
+            segments: 32,
+            center: new Vector3(4.0f, 4.0f, 0.5f));
+        var patch = new ContactPatch();
+        patch.VertexIds.AddRange(new[] { 30, 31, 32, 39, 40, 41, 48, 49, 50 });
+        patch.BoundaryVertexIds.AddRange(new[] { 30, 31, 32, 39, 41, 48, 49, 50 });
+        var deformer = new BodySurfaceIndentationDeformer();
+
+        var result = deformer.Indent(body, electrode, patch, Vector3.UnitZ, new ElasticEngineConfig
+        {
+            ExternalIndentationDepthMm = 0.75,
+            HardConstraintWeight = 80.0,
+            SoftConstraintWeight = 5.0,
+            AnchorConstraintWeight = 100.0,
+            SoftConstraintRings = 1,
+            AnchorMinRingDistance = 3,
+            MaxAnchorCount = 32
+        });
+
+        Assert.True(result.DeformedBodyMesh.Vertices[40].Z < -0.35f);
+        Assert.True(Math.Abs(result.DeformedBodyMesh.Vertices[0].Z) < 0.05f);
+        Assert.True(result.QualityReport.MaxDisplacement > 0.3);
+    }
+
     private static MeshData CreatePlaneMesh(int rows, int columns, float spacing)
     {
         var mesh = new MeshData();

@@ -164,38 +164,87 @@ public sealed class RoiDescriptor : ObservableObject
 
 public sealed class ElectrodeSpec : ObservableObject
 {
-    private double radius = 8.0;
-    private double height = 5.0;
-    private WpfColor color = (WpfColor)WpfColorConverter.ConvertFromString("#60CDFF");
+    private ElectrodeShape shape = ElectrodeShape.Circle;
 
-    public double Radius
+    public ElectrodeSpec()
     {
-        get => radius;
-        set => SetProperty(ref radius, value);
+        foreach (var layer in ElectrodeLayerPresets.CreateDefault())
+        {
+            Layers.Add(layer);
+        }
+
+        Layers.CollectionChanged += (_, _) => RaiseDerivedChanged();
     }
 
-    public double Height
+    public ElectrodeShape Shape
     {
-        get => height;
-        set => SetProperty(ref height, value);
-    }
-
-    public WpfColor Color
-    {
-        get => color;
+        get => shape;
         set
         {
-            if (SetProperty(ref color, value))
+            if (SetProperty(ref shape, value))
             {
-                OnPropertyChanged(nameof(ColorBrush));
-                OnPropertyChanged(nameof(ColorHex));
+                RaiseDerivedChanged();
             }
         }
     }
 
-    public SolidColorBrush ColorBrush => new(Color);
+    public ObservableCollection<ElectrodeLayer> Layers { get; } = new();
 
-    public string ColorHex => $"#{Color.R:X2}{Color.G:X2}{Color.B:X2}";
+    public double TotalThickness => Layers.Sum(layer => layer.Thickness);
+
+    public double FootprintRadius
+    {
+        get
+        {
+            if (Layers.Count == 0)
+            {
+                return 0.0;
+            }
+
+            return Shape switch
+            {
+                ElectrodeShape.Rectangle => Math.Max(
+                    Layers.Max(layer => layer.Width),
+                    Layers.Max(layer => layer.Depth)) / 2.0,
+                _ => Layers.Max(layer => layer.Radius)
+            };
+        }
+    }
+
+    // The "skin contact" layer is index 0; its color is what users see at the placement footprint.
+    public WpfColor PrimaryColor => Layers.Count > 0 ? Layers[0].Color : Colors.LightSkyBlue;
+
+    public SolidColorBrush ColorBrush => new(PrimaryColor);
+
+    public string ColorHex => $"#{PrimaryColor.R:X2}{PrimaryColor.G:X2}{PrimaryColor.B:X2}";
+
+    // Legacy aliases used by older repository / pipeline code.
+    public double Radius => FootprintRadius;
+
+    public double Height => TotalThickness;
+
+    public WpfColor Color => PrimaryColor;
+
+    public void ResetToDefault()
+    {
+        Layers.Clear();
+        foreach (var layer in ElectrodeLayerPresets.CreateDefault())
+        {
+            Layers.Add(layer);
+        }
+    }
+
+    private void RaiseDerivedChanged()
+    {
+        OnPropertyChanged(nameof(TotalThickness));
+        OnPropertyChanged(nameof(FootprintRadius));
+        OnPropertyChanged(nameof(PrimaryColor));
+        OnPropertyChanged(nameof(ColorBrush));
+        OnPropertyChanged(nameof(ColorHex));
+        OnPropertyChanged(nameof(Radius));
+        OnPropertyChanged(nameof(Height));
+        OnPropertyChanged(nameof(Color));
+    }
 }
 
 public sealed class MeshHitResult

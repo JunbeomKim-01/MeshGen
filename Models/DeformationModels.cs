@@ -21,6 +21,8 @@ public sealed class MeshData
 
     public List<int> Indices { get; } = new();
 
+    public List<int>? CellLayerIndices { get; set; }
+
     public List<Vector3>? Normals { get; set; }
 
     public int TriangleCount => Indices.Count / 3;
@@ -32,6 +34,11 @@ public sealed class MeshData
         var copy = new MeshData();
         copy.Vertices.AddRange(Vertices);
         copy.Indices.AddRange(Indices);
+        if (CellLayerIndices is not null)
+        {
+            copy.CellLayerIndices = new List<int>(CellLayerIndices);
+        }
+
         if (Normals is not null)
         {
             copy.Normals = new List<Vector3>(Normals);
@@ -77,6 +84,10 @@ public sealed class ElasticEngineConfig
     public double SmoothingLambda { get; set; } = 0.08;
 
     public double AlignmentClearanceMm { get; set; } = 0.5;
+
+    public double ElectrodeAttachmentClearanceMm { get; set; } = 0.0;
+
+    public double ExternalIndentationDepthMm { get; set; } = 1.0;
 
     public double ContactDistanceThresholdMm { get; set; } = 2.0;
 
@@ -151,6 +162,8 @@ public sealed class ElasticAttachmentResult
     public List<int> UnionContactPatchVertexIds { get; } = new();
 
     public List<ElasticEngineSession> PerElectrodeSessions { get; } = new();
+
+    public Dictionary<int, MeshData> DeformedElectrodeMeshes { get; } = new();
 
     public DeformationQualityReport? AggregateQualityReport { get; set; }
 }

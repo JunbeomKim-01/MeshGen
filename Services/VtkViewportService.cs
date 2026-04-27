@@ -314,7 +314,7 @@ public sealed class VtkViewportService
         Render();
     }
 
-    public void ShowPlacementPreview(vtkPolyData preview, WpfColor color, double opacity)
+    public void ShowPlacementPreview(vtkPolyData preview, WpfColor color, double opacity, IReadOnlyList<WpfColor>? layerColors = null)
     {
         if (renderer is null)
         {
@@ -331,20 +331,24 @@ public sealed class VtkViewportService
 
         var previewMapper = vtkPolyDataMapper.SafeDownCast(previewActor.GetMapper()) ?? vtkPolyDataMapper.New();
         previewMapper.SetInputData(preview);
-        previewMapper.ScalarVisibilityOff();
+        ConfigureElectrodeMapper(previewMapper, layerColors);
         previewMapper.Update();
         previewActor.SetMapper(previewMapper);
         previewActor.SetVisibility(1);
 
         var property = previewActor.GetProperty();
-        ApplyColor(property, color);
-        property.SetOpacity(Math.Max(opacity, 0.55));
+        if (layerColors is null || layerColors.Count == 0)
+        {
+            ApplyColor(property, color);
+        }
+
+        property.SetOpacity(Math.Clamp(opacity, 0.2, 1.0));
         property.SetRepresentationToSurface();
         property.EdgeVisibilityOn();
         property.SetEdgeColor(1.0, 1.0, 1.0);
-        ApplyMaterialDefaults(property);
-        property.SetAmbient(0.65);
-        property.SetDiffuse(0.35);
+        ApplyElectrodeMaterial(property);
+        property.SetAmbient(0.45);
+        property.SetDiffuse(0.55);
         property.Modified();
         Render();
     }
@@ -360,7 +364,12 @@ public sealed class VtkViewportService
         Render();
     }
 
-    public void AddCommittedElectrode(int placementId, vtkPolyData electrode, WpfColor color, double opacity)
+    public void AddCommittedElectrode(
+        int placementId,
+        vtkPolyData electrode,
+        WpfColor color,
+        double opacity,
+        IReadOnlyList<WpfColor>? layerColors = null)
     {
         if (renderer is null)
         {
@@ -374,7 +383,7 @@ public sealed class VtkViewportService
 
         var mapper = vtkPolyDataMapper.New();
         mapper.SetInputData(electrode);
-        mapper.ScalarVisibilityOff();
+        ConfigureElectrodeMapper(mapper, layerColors);
         mapper.Update();
 
         var actor = vtkActor.New();
@@ -385,9 +394,13 @@ public sealed class VtkViewportService
         committedElectrodeSurfaces[placementId] = electrode;
 
         var property = actor.GetProperty();
-        ApplyColor(property, color);
-        property.SetOpacity(opacity);
-        ApplyMaterialDefaults(property);
+        if (layerColors is null || layerColors.Count == 0)
+        {
+            ApplyColor(property, color);
+        }
+
+        property.SetOpacity(Math.Clamp(opacity, 0.0, 1.0));
+        ApplyElectrodeMaterial(property);
         property.Modified();
         Render();
     }
@@ -667,6 +680,15 @@ public sealed class VtkViewportService
         property.SetInterpolationToGouraud();
     }
 
+    private static void ApplyElectrodeMaterial(vtkProperty property)
+    {
+        property.SetAmbient(0.34);
+        property.SetDiffuse(0.76);
+        property.SetSpecular(0.12);
+        property.SetSpecularPower(18);
+        property.SetInterpolationToGouraud();
+    }
+
     private static void ApplyColor(vtkProperty property, WpfColor color)
     {
         var red = color.R / 255.0;
@@ -677,6 +699,30 @@ public sealed class VtkViewportService
         property.SetAmbientColor(red, green, blue);
         property.SetDiffuseColor(red, green, blue);
         property.SetSpecularColor(red, green, blue);
+    }
+
+    private static void ConfigureElectrodeMapper(vtkPolyDataMapper mapper, IReadOnlyList<WpfColor>? layerColors)
+    {
+        if (layerColors is null || layerColors.Count == 0)
+        {
+            mapper.ScalarVisibilityOff();
+            return;
+        }
+
+        var lookupTable = vtkLookupTable.New();
+        lookupTable.SetNumberOfTableValues(layerColors.Count);
+        lookupTable.SetRange(0, Math.Max(layerColors.Count - 1, 0));
+        for (var index = 0; index < layerColors.Count; index++)
+        {
+            var color = layerColors[index];
+            lookupTable.SetTableValue(index, color.R / 255.0, color.G / 255.0, color.B / 255.0, 1.0);
+        }
+
+        lookupTable.Build();
+        mapper.SetLookupTable(lookupTable);
+        mapper.SetScalarRange(0, Math.Max(layerColors.Count - 1, 0));
+        mapper.SetScalarModeToUseCellData();
+        mapper.ScalarVisibilityOn();
     }
 
     private void Render()

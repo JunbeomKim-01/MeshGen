@@ -12,6 +12,8 @@ namespace MeshGenLite.Engine.Geometry;
 /// </summary>
 public static class MeshConverter
 {
+    private const string LayerIndexArrayName = "LayerIndex";
+
     /// <summary>
     /// Converts a <see cref="vtkPolyData"/> surface mesh to a <see cref="MeshData"/>.
     /// </summary>
@@ -39,13 +41,23 @@ public static class MeshConverter
         {
             polys.InitTraversal();
             var idList = vtkIdList.New();
+            var cellScalars = polyData.GetCellData()?.GetScalars();
+            if (cellScalars is not null && cellScalars.GetNumberOfTuples() < polyData.GetNumberOfCells())
+            {
+                cellScalars = null;
+            }
+
+            var cellId = 0;
+            var layerIndices = cellScalars is null ? null : new List<int>();
             while (polys.GetNextCell(idList) != 0)
             {
+                var layerIndex = cellScalars is null ? 0 : (int)Math.Round(cellScalars.GetTuple1(cellId));
                 if (idList.GetNumberOfIds() == 3)
                 {
                     mesh.Indices.Add((int)idList.GetId(0));
                     mesh.Indices.Add((int)idList.GetId(1));
                     mesh.Indices.Add((int)idList.GetId(2));
+                    layerIndices?.Add(layerIndex);
                 }
                 else if (idList.GetNumberOfIds() == 4)
                 {
@@ -53,10 +65,19 @@ public static class MeshConverter
                     mesh.Indices.Add((int)idList.GetId(0));
                     mesh.Indices.Add((int)idList.GetId(1));
                     mesh.Indices.Add((int)idList.GetId(2));
+                    layerIndices?.Add(layerIndex);
                     mesh.Indices.Add((int)idList.GetId(0));
                     mesh.Indices.Add((int)idList.GetId(2));
                     mesh.Indices.Add((int)idList.GetId(3));
+                    layerIndices?.Add(layerIndex);
                 }
+
+                cellId++;
+            }
+
+            if (layerIndices is not null && layerIndices.Count == mesh.TriangleCount)
+            {
+                mesh.CellLayerIndices = layerIndices;
             }
         }
 
@@ -87,6 +108,13 @@ public static class MeshConverter
         }
 
         var triangles = vtkCellArray.New();
+        var layerScalars = mesh.CellLayerIndices is null ? null : vtkIntArray.New();
+        if (layerScalars is not null)
+        {
+            layerScalars.SetName(LayerIndexArrayName);
+            layerScalars.SetNumberOfComponents(1);
+        }
+
         for (var i = 0; i + 2 < mesh.Indices.Count; i += 3)
         {
             if (mesh.Indices[i] < 0 ||
@@ -104,11 +132,21 @@ public static class MeshConverter
             triangle.GetPointIds().SetId(1, mesh.Indices[i + 1]);
             triangle.GetPointIds().SetId(2, mesh.Indices[i + 2]);
             triangles.InsertNextCell(triangle);
+            if (layerScalars is not null)
+            {
+                var triangleId = i / 3;
+                var layerIndex = triangleId < mesh.CellLayerIndices!.Count ? mesh.CellLayerIndices[triangleId] : 0;
+                layerScalars.InsertNextTuple1(layerIndex);
+            }
         }
 
         var polyData = vtkPolyData.New();
         polyData.SetPoints(points);
         polyData.SetPolys(triangles);
+        if (layerScalars is not null)
+        {
+            polyData.GetCellData().SetScalars(layerScalars);
+        }
 
         // Set normals if available
         if (mesh.Normals is not null && mesh.Normals.Count == mesh.Vertices.Count)

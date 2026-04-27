@@ -46,6 +46,28 @@ public sealed class RelayCommand : ICommand
     public void NotifyCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }
 
+public sealed class RelayCommand<T> : ICommand
+{
+    private readonly Action<T?> execute;
+    private readonly Predicate<T?>? canExecute;
+
+    public RelayCommand(Action<T?> execute, Predicate<T?>? canExecute = null)
+    {
+        this.execute = execute;
+        this.canExecute = canExecute;
+    }
+
+    public event EventHandler? CanExecuteChanged;
+
+    public bool CanExecute(object? parameter) => canExecute?.Invoke(Cast(parameter)) ?? true;
+
+    public void Execute(object? parameter) => execute(Cast(parameter));
+
+    public void NotifyCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+
+    private static T? Cast(object? parameter) => parameter is T value ? value : default;
+}
+
 public sealed class AsyncRelayCommand : ICommand
 {
     private readonly Func<Task> executeAsync;
