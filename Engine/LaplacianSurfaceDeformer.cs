@@ -15,12 +15,21 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
             return bodyMesh.DeepCopy();
         }
 
-        return DeformLocal(bodyMesh, constraints, config);
+        return DeformLocal(bodyMesh, new MeshTopology(bodyMesh), constraints, config);
     }
 
-    private static MeshData DeformLocal(MeshData bodyMesh, IReadOnlyList<ConstraintPoint> constraints, ElasticEngineConfig config)
+    public MeshData Deform(MeshData bodyMesh, MeshTopology topology, IReadOnlyList<ConstraintPoint> constraints, ElasticEngineConfig config)
     {
-        var topology = new MeshTopology(bodyMesh);
+        if (bodyMesh.Vertices.Count == 0 || constraints.Count == 0 || !config.UseLaplacian)
+        {
+            return bodyMesh.DeepCopy();
+        }
+
+        return DeformLocal(bodyMesh, topology, constraints, config);
+    }
+
+    private static MeshData DeformLocal(MeshData bodyMesh, MeshTopology topology, IReadOnlyList<ConstraintPoint> constraints, ElasticEngineConfig config)
+    {
         var activeOriginalIds = SelectActiveVertices(bodyMesh, constraints, topology, config);
         if (activeOriginalIds.Count < 3 || activeOriginalIds.Count >= bodyMesh.Vertices.Count)
         {

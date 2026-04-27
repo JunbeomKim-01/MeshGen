@@ -14,13 +14,22 @@ public sealed class ConstraintBuilder : IConstraintBuilder
         IReadOnlyList<int> anchorVertexIds,
         ElasticEngineConfig config)
     {
+        return Build(bodyMesh, new MeshTopology(bodyMesh), alignedElectrodeMesh, contactPatch, anchorVertexIds, config);
+    }
+
+    public IReadOnlyList<ConstraintPoint> Build(
+        MeshData bodyMesh,
+        MeshTopology topology,
+        MeshData alignedElectrodeMesh,
+        ContactPatch contactPatch,
+        IReadOnlyList<int> anchorVertexIds,
+        ElasticEngineConfig config)
+    {
         var constraints = new List<ConstraintPoint>();
         if (bodyMesh.Vertices.Count == 0 || contactPatch.VertexIds.Count == 0)
         {
             return constraints;
         }
-
-        var topology = new MeshTopology(bodyMesh);
         var underside = ElectrodeSampling.GetUndersideCap(alignedElectrodeMesh, bodyMesh);
         var undersidePoints = underside.VertexIds.Count > 0
             ? underside.VertexIds.Select(id => alignedElectrodeMesh.Vertices[id]).ToArray()

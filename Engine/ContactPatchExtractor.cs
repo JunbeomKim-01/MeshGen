@@ -9,14 +9,16 @@ public sealed class ContactPatchExtractor : IContactPatchExtractor
 {
     public ContactPatch Extract(MeshData bodyMesh, MeshData electrodeMesh, ContactPatchOptions options)
     {
+        return Extract(bodyMesh, new KdTree(bodyMesh.Vertices), new MeshTopology(bodyMesh), electrodeMesh, options);
+    }
+
+    public ContactPatch Extract(MeshData bodyMesh, KdTree bodyTree, MeshTopology topology, MeshData electrodeMesh, ContactPatchOptions options)
+    {
         var patch = new ContactPatch();
         if (bodyMesh.Vertices.Count == 0 || electrodeMesh.Vertices.Count == 0)
         {
             return patch;
         }
-
-        var topology = new MeshTopology(bodyMesh);
-        var bodyTree = new KdTree(bodyMesh.Vertices);
         var underside = ElectrodeSampling.GetUndersideCap(electrodeMesh, bodyMesh);
         var initial = new HashSet<int>();
 

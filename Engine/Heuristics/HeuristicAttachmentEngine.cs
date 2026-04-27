@@ -25,8 +25,14 @@ public sealed class HeuristicAttachmentEngine
             ElectrodeMesh = electrodeMesh.DeepCopy()
         };
 
+        // --- Global Caching for Performance ---
+        // Building KdTree and MeshTopology is expensive (O(N log N)).
+        // We build them exactly once and pass them down the entire pipeline to drastically improve speed.
+        var bodyTree = new KdTree(bodyMesh.Vertices);
+        var bodyTopology = new MeshTopology(bodyMesh);
+
         // Determine Approach Direction (points from electrode towards the body)
-        var undersideCap = ElectrodeSampling.GetUndersideCap(electrodeMesh, bodyMesh);
+        var undersideCap = ElectrodeSampling.GetUndersideCap(electrodeMesh, bodyMesh, bodyTree);
         var electrodeApproachDirection = undersideCap.CapNormal;
         var outwardDirection = -electrodeApproachDirection;
 
@@ -34,7 +40,6 @@ public sealed class HeuristicAttachmentEngine
         // Push the electrode completely outside the body before searching for correspondences.
         // We find the maximum penetration depth against the body surface using the outward direction.
         var maxPenetration = 0.0f;
-        var bodyTree = new KdTree(bodyMesh.Vertices);
         foreach (var v in electrodeMesh.Vertices)
         {
             var nearestId = bodyTree.FindNearest(v);
@@ -68,9 +73,9 @@ public sealed class HeuristicAttachmentEngine
         }
 
         // Now sample the bottom after it has been safely placed outside
-        var samples = sampler.Sample(electrodeMesh, bodyMesh);
+        var samples = sampler.Sample(electrodeMesh, bodyMesh, bodyTree);
 
-        var hits = correspondenceService.FindCorrespondences(samples, bodyMesh, electrodeApproachDirection);
+        var hits = correspondenceService.FindCorrespondences(samples, bodyMesh, bodyTree, electrodeApproachDirection);
 
         var transform = poseOptimizer.OptimizePose(samples, hits);
 
@@ -93,7 +98,7 @@ public sealed class HeuristicAttachmentEngine
             DistanceThresholdMm = parameters.ContactThresholdMm, 
             ExpansionRings = parameters.ExpansionRings 
         };
-        var patch = patchExtractor.Extract(bodyMesh, alignedElectrode, patchOptions);
+        var patch = patchExtractor.Extract(bodyMesh, bodyTree, bodyTopology, alignedElectrode, patchOptions);
 
         var config = new ElasticEngineConfig
         {
@@ -103,9 +108,9 @@ public sealed class HeuristicAttachmentEngine
             SoftConstraintRings = parameters.ExpansionRings
         };
 
-        var constraints = constraintBuilder.Build(bodyMesh, alignedElectrode, patch, new List<int>(), config);
+        var constraints = constraintBuilder.Build(bodyMesh, bodyTopology, alignedElectrode, patch, new List<int>(), config);
         
-        var deformedBody = surfaceDeformer.Deform(bodyMesh, constraints, config);
+        var deformedBody = surfaceDeformer.Deform(bodyMesh, bodyTopology, constraints, config);
 
         // --- Step: Final Penetration Resolution (Phase 4 of heuristic design) ---
         // Laplacian smoothing might not fully resolve deep penetrations due to mesh stiffness.

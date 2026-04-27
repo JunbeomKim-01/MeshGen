@@ -8,7 +8,12 @@ public sealed class ElectrodeBottomSampler
 {
     public IReadOnlyList<ElectrodeSamplePoint> Sample(MeshData electrodeMesh, MeshData bodyMesh)
     {
-        var underside = ElectrodeSampling.GetUndersideCap(electrodeMesh, bodyMesh);
+        return Sample(electrodeMesh, bodyMesh, new KdTree(bodyMesh.Vertices));
+    }
+
+    public IReadOnlyList<ElectrodeSamplePoint> Sample(MeshData electrodeMesh, MeshData bodyMesh, KdTree bodyTree)
+    {
+        var underside = ElectrodeSampling.GetUndersideCap(electrodeMesh, bodyMesh, bodyTree);
         var samples = new List<ElectrodeSamplePoint>();
         
         var boundaryIds = FindBoundary(electrodeMesh, underside.VertexIds);

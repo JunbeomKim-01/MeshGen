@@ -18,6 +18,11 @@ internal static class ElectrodeSampling
 {
     public static ElectrodeCapSample GetUndersideCap(MeshData electrodeMesh, MeshData bodyMesh)
     {
+        return GetUndersideCap(electrodeMesh, bodyMesh, new KdTree(bodyMesh.Vertices));
+    }
+
+    public static ElectrodeCapSample GetUndersideCap(MeshData electrodeMesh, MeshData bodyMesh, KdTree bodyTree)
+    {
         if (electrodeMesh.Vertices.Count == 0)
         {
             return new ElectrodeCapSample
@@ -66,7 +71,7 @@ internal static class ElectrodeSampling
 
         var minCentroid = ComputeCentroid(minIds.Select(id => electrodeMesh.Vertices[id]));
         var maxCentroid = ComputeCentroid(maxIds.Select(id => electrodeMesh.Vertices[id]));
-        var bodyTree = new KdTree(bodyMesh.Vertices);
+        
         var minDistance = DistanceToClosest(bodyTree, bodyMesh, minCentroid);
         var maxDistance = DistanceToClosest(bodyTree, bodyMesh, maxCentroid);
 

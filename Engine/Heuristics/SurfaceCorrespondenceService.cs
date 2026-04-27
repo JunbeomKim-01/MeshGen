@@ -11,7 +11,15 @@ public sealed class SurfaceCorrespondenceService
         MeshData bodyMesh, 
         Vector3 electrodeApproachDirection)
     {
-        var bodyTree = new KdTree(bodyMesh.Vertices);
+        return FindCorrespondences(samples, bodyMesh, new KdTree(bodyMesh.Vertices), electrodeApproachDirection);
+    }
+
+    public IReadOnlyList<SurfaceHitResult> FindCorrespondences(
+        IReadOnlyList<ElectrodeSamplePoint> samples, 
+        MeshData bodyMesh, 
+        KdTree bodyTree,
+        Vector3 electrodeApproachDirection)
+    {
         var results = new List<SurfaceHitResult>();
 
         foreach (var sample in samples)
