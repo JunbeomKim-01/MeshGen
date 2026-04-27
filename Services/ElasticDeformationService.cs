@@ -37,6 +37,8 @@ public sealed class ElasticDeformationService : IElasticDeformationService
             cancellationToken);
     }
 
+    private readonly object vtkLock = new();
+
     private ElasticAttachmentResult AttachCore(
         MeshData originalBodyMesh,
         ElectrodeSpec spec,
@@ -51,65 +53,96 @@ public sealed class ElasticDeformationService : IElasticDeformationService
         }
 
         config ??= new ElasticEngineConfig();
-        var bodyMesh = originalBodyMesh.DeepCopy();
         var result = new ElasticAttachmentResult
         {
             OriginalBodyMesh = originalBodyMesh.DeepCopy()
         };
-        var unionPatch = new HashSet<int>();
-        var reports = new List<DeformationQualityReport>();
-        var heuristicEngine = new MeshGenLite.Engine.Heuristics.HeuristicAttachmentEngine();
+
+        progress?.Report(new PipelineProgress { Message = "Preparing global context", Detail = "Building KD-Tree and Topology" });
+        var bodyTree = new KdTree(originalBodyMesh.Vertices);
+        var bodyTopology = new MeshTopology(originalBodyMesh);
         
-        foreach (var placement in placements)
+        var heuristicParams = new MeshGenLite.Models.AttachmentParameters
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            progress?.Report(new PipelineProgress
-            {
-                Message = $"Pressing electrode {placement.Id}",
-                Detail = "Building electrode mesh"
-            });
+            ContactThresholdMm = (float)config.ContactDistanceThresholdMm,
+            ExpansionRings = config.ContactExpansionRing,
+            HardWeight = (float)config.HardConstraintWeight,
+            SoftWeight = (float)config.SoftConstraintWeight
+        };
 
-            var bodyBeforePass = bodyMesh.DeepCopy();
-            var electrodeMesh = BuildElectrodeMesh(spec, placement);
-            
-            progress?.Report(new PipelineProgress
+        // --- Phase 1: Compute Constraints in Parallel ---
+        progress?.Report(new PipelineProgress { Message = "Analyzing placements", Detail = $"Processing {placements.Count} electrodes in parallel" });
+        
+        var sessions = placements
+            .AsParallel()
+            .WithCancellation(cancellationToken)
+            .Select(placement =>
             {
-                Message = $"Pressing electrode {placement.Id}",
-                Detail = "Applying Heuristic Attachment Algorithm"
-            });
+                // Instantiate engine inside the loop for thread isolation
+                var threadEngine = new MeshGenLite.Engine.Heuristics.HeuristicAttachmentEngine();
+                var electrodeMesh = BuildElectrodeMesh(spec, placement);
+                var session = threadEngine.ComputeConstraints(originalBodyMesh, bodyTree, bodyTopology, electrodeMesh, heuristicParams);
+                session.ElectrodeId = placement.Id;
+                return session;
+            })
+            .ToList();
 
-            // Convert ElasticEngineConfig to AttachmentParameters
-            var heuristicParams = new MeshGenLite.Models.AttachmentParameters
+        // --- Phase 2: Merge Constraints and Deform Body in Single Pass ---
+        progress?.Report(new PipelineProgress { Message = "Applying deformation", Detail = "Solving Laplacian system for all constraints" });
+        
+        // Optimization: Downsample constraints if too many are generated per electrode
+        // This keeps the solver fast even with high-resolution electrode meshes.
+        const int MaxConstraintsPerElectrode = 300;
+        var allConstraints = new List<ConstraintPoint>();
+        foreach (var session in sessions)
+        {
+            if (session.Constraints.Count <= MaxConstraintsPerElectrode)
             {
-                ContactThresholdMm = (float)config.ContactDistanceThresholdMm,
-                ExpansionRings = config.ContactExpansionRing,
-                HardWeight = (float)config.HardConstraintWeight,
-                SoftWeight = (float)config.SoftConstraintWeight
-            };
-
-            var session = heuristicEngine.Attach(bodyMesh, electrodeMesh, heuristicParams);
-            session.ElectrodeId = placement.Id;
-            bodyMesh = session.DeformedBodyMesh ?? bodyMesh;
-            
-            result.PerElectrodeSessions.Add(session);
-            result.DeformedElectrodeMeshes[placement.Id] = session.AlignedElectrodeMesh?.DeepCopy() ?? electrodeMesh;
-            if (session.ContactPatch is not null)
-            {
-                foreach (var vertexId in session.ContactPatch.VertexIds)
-                {
-                    unionPatch.Add(vertexId);
-                }
+                allConstraints.AddRange(session.Constraints);
             }
-
-            if (session.QualityReport is not null)
+            else
             {
-                reports.Add(session.QualityReport);
+                // Simple stride-based downsampling for performance
+                int stride = (int)Math.Ceiling((double)session.Constraints.Count / MaxConstraintsPerElectrode);
+                for (int i = 0; i < session.Constraints.Count; i += stride)
+                {
+                    allConstraints.Add(session.Constraints[i]);
+                }
             }
         }
 
-        result.FinalBodyMesh = bodyMesh.DeepCopy();
+        var surfaceDeformer = new MeshGenLite.Engine.LaplacianSurfaceDeformer();
+        var deformedBody = surfaceDeformer.Deform(originalBodyMesh, bodyTopology, allConstraints, config);
+        
+        // --- Phase 3: Finalize and Quality Check in Parallel ---
+        progress?.Report(new PipelineProgress { Message = "Finalizing attachment", Detail = "Resolving residual penetrations and evaluating quality" });
+        
+        var unionPatch = new HashSet<int>();
+        var finalSessions = sessions
+            .AsParallel()
+            .WithCancellation(cancellationToken)
+            .Select(session =>
+            {
+                var threadEngine = new MeshGenLite.Engine.Heuristics.HeuristicAttachmentEngine();
+                var finalized = threadEngine.FinalizeAttachment(session, deformedBody, heuristicParams);
+                return finalized;
+            })
+            .ToList();
+
+        foreach (var session in finalSessions)
+        {
+            result.PerElectrodeSessions.Add(session);
+            result.DeformedElectrodeMeshes[session.ElectrodeId] = session.AlignedElectrodeMesh?.DeepCopy() ?? session.ElectrodeMesh;
+            
+            if (session.ContactPatch is not null)
+            {
+                foreach (var vId in session.ContactPatch.VertexIds) unionPatch.Add(vId);
+            }
+        }
+
+        result.FinalBodyMesh = deformedBody;
         result.UnionContactPatchVertexIds.AddRange(unionPatch.OrderBy(id => id));
-        result.AggregateQualityReport = DeformationQualityReport.AggregateWorstCase(reports);
+        result.AggregateQualityReport = DeformationQualityReport.AggregateWorstCase(finalSessions.Select(s => s.QualityReport).Where(r => r != null).ToList()!);
 
         progress?.Report(new PipelineProgress
         {
@@ -122,17 +155,20 @@ public sealed class ElasticDeformationService : IElasticDeformationService
 
     private MeshData BuildElectrodeMesh(ElectrodeSpec spec, ElectrodePlacement placement)
     {
-        var localMesh = electrodeFactory.CreateNeedle(spec);
-        var transform = transformBuilder.BuildTransform(placement.SurfacePoint, placement.WorldNormal, placement.Clearance);
+        lock (vtkLock)
+        {
+            var localMesh = electrodeFactory.CreateNeedle(spec);
+            var transform = transformBuilder.BuildTransform(placement.SurfacePoint, placement.WorldNormal, placement.Clearance);
 
-        var filter = vtkTransformPolyDataFilter.New();
-        filter.SetInputData(localMesh);
-        filter.SetTransform(transform);
-        filter.Update();
+            var filter = vtkTransformPolyDataFilter.New();
+            filter.SetInputData(localMesh);
+            filter.SetTransform(transform);
+            filter.Update();
 
-        var worldMesh = vtkPolyData.New();
-        worldMesh.DeepCopy(filter.GetOutput());
-        return MeshConverter.FromVtkPolyData(worldMesh);
+            var worldMesh = vtkPolyData.New();
+            worldMesh.DeepCopy(filter.GetOutput());
+            return MeshConverter.FromVtkPolyData(worldMesh);
+        }
     }
 
     private static Vector3 ToVector3(System.Windows.Media.Media3D.Vector3D vector)

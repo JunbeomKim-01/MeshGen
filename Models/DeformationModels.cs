@@ -146,6 +146,11 @@ public sealed class ElasticEngineSession
     public List<int> AnchorVertexIds { get; } = new();
 
     public List<ConstraintPoint> Constraints { get; } = new();
+    
+    /// <summary>
+    /// Stores intermediate calculation data needed for parallel processing synchronization.
+    /// </summary>
+    public Dictionary<string, object> InternalData { get; } = new();
 
     public DeformationQualityReport? QualityReport { get; set; }
 }

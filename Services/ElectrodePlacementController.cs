@@ -16,6 +16,9 @@ public sealed class ElectrodePlacementController
     private readonly VtkViewportService viewportService;
 
     private PreviewState? currentPreview;
+    private vtkPolyData? cachedLocalMesh;
+    private long cachedSpecFingerprint;
+    private WpfColor[]? cachedLayerColors;
 
     public ElectrodePlacementController(
         MeshHitTestService hitTestService,
@@ -65,11 +68,12 @@ public sealed class ElectrodePlacementController
             return false;
         }
 
-        var localMesh = electrodeFactory.CreateNeedle(spec);
+        var localMesh = GetCachedLocalMesh(spec);
+        var layerColors = cachedLayerColors!;
+
         var transform = transformBuilder.BuildTransform(hit.Position, hit.Normal, DefaultClearance);
         var worldMesh = ApplyTransform(localMesh, transform);
         var worldPosition = hit.Position + (hit.Normal * DefaultClearance);
-        var layerColors = electrodeFactory.GetLayerColors(spec);
 
         currentPreview = new PreviewState(hit, worldMesh, worldPosition);
         viewportService.ShowPlacementPreview(worldMesh, color, 0.65, layerColors);
@@ -90,10 +94,46 @@ public sealed class ElectrodePlacementController
             DefaultClearance,
             currentPreview.WorldPosition);
 
-        viewportService.AddCommittedElectrode(placement.Id, currentPreview.WorldMesh, color, 1.0, electrodeFactory.GetLayerColors(spec));
+        var layerColors = cachedLayerColors ?? electrodeFactory.GetLayerColors(spec);
+        viewportService.AddCommittedElectrode(placement.Id, currentPreview.WorldMesh, color, 1.0, layerColors);
         viewportService.HidePlacementPreview();
         currentPreview = null;
         return placement;
+    }
+
+    private vtkPolyData GetCachedLocalMesh(ElectrodeSpec spec)
+    {
+        var fingerprint = ComputeSpecFingerprint(spec);
+        if (cachedLocalMesh is not null && fingerprint == cachedSpecFingerprint)
+        {
+            return cachedLocalMesh;
+        }
+
+        // Visualization-only mesh (no FEM-grade subdivision) keeps preview rebuilds cheap.
+        cachedLocalMesh = electrodeFactory.Build(spec, dense: false);
+        cachedLayerColors = electrodeFactory.GetLayerColors(spec);
+        cachedSpecFingerprint = fingerprint;
+        return cachedLocalMesh;
+    }
+
+    private static long ComputeSpecFingerprint(ElectrodeSpec spec)
+    {
+        unchecked
+        {
+            long hash = 17;
+            hash = (hash * 31) + (int)spec.Shape;
+            hash = (hash * 31) + spec.Layers.Count;
+            foreach (var layer in spec.Layers)
+            {
+                hash = (hash * 31) + BitConverter.DoubleToInt64Bits(layer.Radius);
+                hash = (hash * 31) + BitConverter.DoubleToInt64Bits(layer.Width);
+                hash = (hash * 31) + BitConverter.DoubleToInt64Bits(layer.Depth);
+                hash = (hash * 31) + BitConverter.DoubleToInt64Bits(layer.Thickness);
+                // Color is part of fingerprint so layer color edits invalidate the cached LUT.
+                hash = (hash * 31) + (layer.Color.R << 16 | layer.Color.G << 8 | layer.Color.B);
+            }
+            return hash;
+        }
     }
 
     private static vtkPolyData ApplyTransform(vtkPolyData localMesh, vtkTransform transform)

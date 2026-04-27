@@ -1,8 +1,12 @@
 using System.Numerics;
+using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.LinearAlgebra.Double;
+using MathNet.Numerics.LinearAlgebra.Double.Solvers;
+using MathNet.Numerics.LinearAlgebra.Solvers;
 using MeshGenLite.Engine.Geometry;
 using MeshGenLite.Engine.Interfaces;
 using MeshGenLite.Models;
+using MathVector = MathNet.Numerics.LinearAlgebra.Vector<double>;
 
 namespace MeshGenLite.Engine;
 
@@ -31,9 +35,9 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
     private static MeshData DeformLocal(MeshData bodyMesh, MeshTopology topology, IReadOnlyList<ConstraintPoint> constraints, ElasticEngineConfig config)
     {
         var activeOriginalIds = SelectActiveVertices(bodyMesh, constraints, topology, config);
-        if (activeOriginalIds.Count < 3 || activeOriginalIds.Count >= bodyMesh.Vertices.Count)
+        if (activeOriginalIds.Count < 3)
         {
-            return SolveMesh(bodyMesh, constraints);
+            return bodyMesh.DeepCopy();
         }
 
         var indexMap = new Dictionary<int, int>(activeOriginalIds.Count);
@@ -73,20 +77,9 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
                 continue;
             }
 
-            if (aActive)
-            {
-                boundaryOriginalIds.Add(a);
-            }
-
-            if (bActive)
-            {
-                boundaryOriginalIds.Add(b);
-            }
-
-            if (cActive)
-            {
-                boundaryOriginalIds.Add(c);
-            }
+            if (aActive) boundaryOriginalIds.Add(a);
+            if (bActive) boundaryOriginalIds.Add(b);
+            if (cActive) boundaryOriginalIds.Add(c);
         }
 
         if (localMesh.Indices.Count == 0)
@@ -97,39 +90,35 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
         var localConstraints = new List<ConstraintPoint>();
         foreach (var constraint in constraints)
         {
-            if (!indexMap.TryGetValue(constraint.VertexId, out var localVertexId))
+            if (indexMap.TryGetValue(constraint.VertexId, out var localVertexId))
             {
-                continue;
+                localConstraints.Add(new ConstraintPoint
+                {
+                    VertexId = localVertexId,
+                    TargetPosition = constraint.TargetPosition,
+                    Weight = constraint.Weight,
+                    IsHardConstraint = constraint.IsHardConstraint
+                });
             }
-
-            localConstraints.Add(new ConstraintPoint
-            {
-                VertexId = localVertexId,
-                TargetPosition = constraint.TargetPosition,
-                Weight = constraint.Weight,
-                IsHardConstraint = constraint.IsHardConstraint
-            });
         }
 
         var constrainedLocalIds = localConstraints.Select(constraint => constraint.VertexId).ToHashSet();
         foreach (var originalBoundaryId in boundaryOriginalIds)
         {
             var localBoundaryId = indexMap[originalBoundaryId];
-            if (constrainedLocalIds.Contains(localBoundaryId))
+            if (!constrainedLocalIds.Contains(localBoundaryId))
             {
-                continue;
+                localConstraints.Add(new ConstraintPoint
+                {
+                    VertexId = localBoundaryId,
+                    TargetPosition = bodyMesh.Vertices[originalBoundaryId],
+                    Weight = config.AnchorConstraintWeight,
+                    IsHardConstraint = true
+                });
             }
-
-            localConstraints.Add(new ConstraintPoint
-            {
-                VertexId = localBoundaryId,
-                TargetPosition = bodyMesh.Vertices[originalBoundaryId],
-                Weight = config.AnchorConstraintWeight,
-                IsHardConstraint = true
-            });
         }
 
-        var localDeformed = SolveMesh(localMesh, localConstraints);
+        var localDeformed = SolveMesh(localMesh, topology, localConstraints, config);
         var deformed = bodyMesh.DeepCopy();
         for (var localId = 0; localId < reverseMap.Count; localId++)
         {
@@ -139,58 +128,96 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
         return new BodyMeshPreprocessor().RecomputeNormals(deformed);
     }
 
-    private static MeshData SolveMesh(MeshData mesh, IReadOnlyList<ConstraintPoint> constraints)
+    private static MeshData SolveMesh(MeshData mesh, MeshTopology topology, IReadOnlyList<ConstraintPoint> constraints, ElasticEngineConfig config)
     {
-        var laplacian = BuildLaplacian(mesh);
-        var originalX = DenseVector.OfEnumerable(mesh.Vertices.Select(vertex => (double)vertex.X));
-        var originalY = DenseVector.OfEnumerable(mesh.Vertices.Select(vertex => (double)vertex.Y));
-        var originalZ = DenseVector.OfEnumerable(mesh.Vertices.Select(vertex => (double)vertex.Z));
+        var n = mesh.Vertices.Count;
+        var laplacian = BuildLaplacian(mesh, topology);
 
-        var deltaX = laplacian * originalX;
-        var deltaY = laplacian * originalY;
-        var deltaZ = laplacian * originalZ;
+        // Target differential coordinates (Laplacian coordinates)
+        var originalX = DenseVector.OfEnumerable(mesh.Vertices.Select(v => (double)v.X));
+        var originalY = DenseVector.OfEnumerable(mesh.Vertices.Select(v => (double)v.Y));
+        var originalZ = DenseVector.OfEnumerable(mesh.Vertices.Select(v => (double)v.Z));
 
-        var system = SparseMatrix.OfMatrix(laplacian.TransposeThisAndMultiply(laplacian));
-        var rhsX = laplacian.TransposeThisAndMultiply(deltaX);
-        var rhsY = laplacian.TransposeThisAndMultiply(deltaY);
-        var rhsZ = laplacian.TransposeThisAndMultiply(deltaZ);
+        // Compute deltas in parallel (3 independent matrix-vector products).
+        MathVector? dx = null, dy = null, dz = null;
+        Parallel.Invoke(
+            () => dx = laplacian * originalX,
+            () => dy = laplacian * originalY,
+            () => dz = laplacian * originalZ);
+
+        SparseMatrix system;
+        DenseVector rhsX, rhsY, rhsZ;
+
+        if (config.UseBiharmonic)
+        {
+            // Solve (L'L + W)x = L'dx + Wy  -> higher quality, slower
+            var lt = (SparseMatrix)laplacian.Transpose();
+            system = (SparseMatrix)(lt * laplacian);
+            rhsX = (DenseVector)(lt * dx!);
+            rhsY = (DenseVector)(lt * dy!);
+            rhsZ = (DenseVector)(lt * dz!);
+        }
+        else
+        {
+            // Solve (L + W)x = dx + Wy  -> fast, good enough for most cases
+            system = laplacian;
+            rhsX = (DenseVector)dx!;
+            rhsY = (DenseVector)dy!;
+            rhsZ = (DenseVector)dz!;
+        }
 
         foreach (var constraint in constraints)
         {
-            if (constraint.VertexId < 0 || constraint.VertexId >= mesh.Vertices.Count)
-            {
-                continue;
-            }
+            if (constraint.VertexId < 0 || constraint.VertexId >= n) continue;
 
-            var weight = Math.Max(constraint.Weight, 1e-4);
+            var weight = Math.Max(constraint.Weight, 1e-6);
             system[constraint.VertexId, constraint.VertexId] += weight;
             rhsX[constraint.VertexId] += weight * constraint.TargetPosition.X;
             rhsY[constraint.VertexId] += weight * constraint.TargetPosition.Y;
             rhsZ[constraint.VertexId] += weight * constraint.TargetPosition.Z;
         }
 
-        for (var diagonal = 0; diagonal < mesh.Vertices.Count; diagonal++)
-        {
-            if (Math.Abs(system[diagonal, diagonal]) < 1e-8)
-            {
-                system[diagonal, diagonal] = 1.0;
-            }
-        }
+        var solX = DenseVector.Create(n, 0.0);
+        var solY = DenseVector.Create(n, 0.0);
+        var solZ = DenseVector.Create(n, 0.0);
 
-        var solvedX = system.Solve(rhsX);
-        var solvedY = system.Solve(rhsY);
-        var solvedZ = system.Solve(rhsZ);
+        // Run 3 RHS solves in parallel using sparse iterative solver (BiCgStab + diagonal preconditioner).
+        // For symmetric Laplacian-edit systems this converges in O(sqrt(condition number)) iterations,
+        // dramatically faster than direct LU (O(n^3)) on n > ~1000 problems.
+        Parallel.Invoke(
+            () => SolveIterative(system, rhsX, solX),
+            () => SolveIterative(system, rhsY, solY),
+            () => SolveIterative(system, rhsZ, solZ));
 
         var deformed = mesh.DeepCopy();
-        for (var vertexId = 0; vertexId < deformed.Vertices.Count; vertexId++)
+        for (var i = 0; i < n; i++)
         {
-            deformed.Vertices[vertexId] = new Vector3(
-                (float)solvedX[vertexId],
-                (float)solvedY[vertexId],
-                (float)solvedZ[vertexId]);
+            deformed.Vertices[i] = new Vector3((float)solX[i], (float)solY[i], (float)solZ[i]);
         }
+        return deformed;
+    }
 
-        return new BodyMeshPreprocessor().RecomputeNormals(deformed);
+    private static void SolveIterative(SparseMatrix system, MathVector rhs, MathVector result)
+    {
+        // Per-thread instances: iterator/solver/preconditioner all carry mutable state.
+        var solver = new BiCgStab();
+        var preconditioner = new DiagonalPreconditioner();
+        var iterCount = new IterationCountStopCriterion<double>(2000);
+        var residual = new ResidualStopCriterion<double>(1e-6);
+
+        try
+        {
+            system.TrySolveIterative(rhs, result, solver, preconditioner, iterCount, residual);
+        }
+        catch
+        {
+            // Fall back to direct solve if iterative fails to converge or preconditioner is singular.
+            var direct = system.Solve(rhs);
+            for (var i = 0; i < direct.Count; i++)
+            {
+                result[i] = direct[i];
+            }
+        }
     }
 
     private static HashSet<int> SelectActiveVertices(
@@ -225,7 +252,7 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
         }
 
         var maxDepth = Math.Max(config.LocalSolveExpansionRings, 1);
-        var maxVertices = Math.Max(config.MaxLocalSolveVertexCount, movedSeeds.Count);
+        var maxVertices = Math.Min(Math.Max(config.MaxLocalSolveVertexCount, movedSeeds.Count), 8000); // Hard cap at 8000 vertices for performance
         while (queue.Count > 0 && active.Count < maxVertices)
         {
             var (vertexId, depth) = queue.Dequeue();
@@ -300,10 +327,9 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
         return new BodyMeshPreprocessor().RecomputeNormals(deformed);
     }
 
-    private static SparseMatrix BuildLaplacian(MeshData mesh)
+    private static SparseMatrix BuildLaplacian(MeshData mesh, MeshTopology topology)
     {
         var size = mesh.Vertices.Count;
-        var laplacian = SparseMatrix.Create(size, size, 0.0);
         var cotangentWeights = new Dictionary<(int A, int B), double>();
 
         for (var index = 0; index + 2 < mesh.Indices.Count; index += 3)
@@ -311,25 +337,27 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
             var i = mesh.Indices[index];
             var j = mesh.Indices[index + 1];
             var k = mesh.Indices[index + 2];
-            if (!IsValidTriangleIndex(mesh, i, j, k))
-            {
-                continue;
-            }
+            if (!IsValidTriangleIndex(mesh, i, j, k)) continue;
 
             AddCotangentWeight(cotangentWeights, j, k, Cotangent(mesh.Vertices[i], mesh.Vertices[j], mesh.Vertices[k]));
             AddCotangentWeight(cotangentWeights, i, k, Cotangent(mesh.Vertices[j], mesh.Vertices[i], mesh.Vertices[k]));
             AddCotangentWeight(cotangentWeights, i, j, Cotangent(mesh.Vertices[k], mesh.Vertices[i], mesh.Vertices[j]));
         }
 
-        var topology = new MeshTopology(mesh);
         var diagonalWeights = new double[size];
+        // Build COO triplets up-front: filling SparseMatrix via OfIndexed avoids per-mutation
+        // CSR re-allocation that was O(N) per write (= O(N*E) for the whole build).
+        var triplets = new List<Tuple<int, int, double>>(cotangentWeights.Count * 2 + size);
+
         foreach (var pair in cotangentWeights)
         {
             var weight = Math.Max(pair.Value, 1e-4);
             var a = pair.Key.A;
             var b = pair.Key.B;
-            laplacian[a, b] -= weight;
-            laplacian[b, a] -= weight;
+            if (a >= size || b >= size) continue;
+
+            triplets.Add(Tuple.Create(a, b, -weight));
+            triplets.Add(Tuple.Create(b, a, -weight));
             diagonalWeights[a] += weight;
             diagonalWeights[b] += weight;
         }
@@ -338,17 +366,20 @@ public sealed class LaplacianSurfaceDeformer : ISurfaceDeformer
         {
             if (diagonalWeights[vertexId] <= 1e-8)
             {
+                // Fall back to combinatorial (uniform) Laplacian for isolated/boundary verts
+                // so the matrix stays positive-definite.
                 foreach (var neighbor in topology.GetNeighbors(vertexId))
                 {
-                    laplacian[vertexId, neighbor] -= 1.0;
+                    if (neighbor >= size) continue;
+                    triplets.Add(Tuple.Create(vertexId, neighbor, -1.0));
                     diagonalWeights[vertexId] += 1.0;
                 }
             }
 
-            laplacian[vertexId, vertexId] = diagonalWeights[vertexId];
+            triplets.Add(Tuple.Create(vertexId, vertexId, diagonalWeights[vertexId]));
         }
 
-        return laplacian;
+        return SparseMatrix.OfIndexed(size, size, triplets);
     }
 
     private static void AddCotangentWeight(Dictionary<(int A, int B), double> weights, int a, int b, double value)

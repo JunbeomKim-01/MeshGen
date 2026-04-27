@@ -356,7 +356,7 @@ public sealed class AttachmentPanelViewModel : ObservableObject
 public sealed class VolumeMeshViewModel : ObservableObject
 {
     private string alphaMm = "0";
-    private string maxPoints = "5000";
+    private string maxPoints = "3000";
     private string summary = "No volume mesh. Build the external surface (optionally run attachment) and click Generate.";
 
     public string AlphaMm
@@ -928,14 +928,15 @@ public sealed class ShellViewModel : ObservableObject
     {
         var body = artifacts.DeformedBodySurface ?? artifacts.ExternalSurface;
         var electrodes = viewportService.GetCommittedElectrodeSurfaces();
-        if (body is null && electrodes.Count == 0)
+        var externalId = RoiPanel.SelectedExternalRoi?.Id;
+        var rois = artifacts.SurfaceMeshes
+            .Where(mesh => mesh.Roi.Id != externalId)
+            .Select(mesh => mesh.PolyData)
+            .ToList();
+
+        if (body is null && electrodes.Count == 0 && rois.Count == 0)
         {
             return null;
-        }
-
-        if (electrodes.Count == 0)
-        {
-            return body;
         }
 
         var append = vtkAppendPolyData.New();
@@ -947,6 +948,11 @@ public sealed class ShellViewModel : ObservableObject
         foreach (var electrode in electrodes)
         {
             append.AddInputData(electrode);
+        }
+
+        foreach (var roi in rois)
+        {
+            append.AddInputData(roi);
         }
 
         append.Update();

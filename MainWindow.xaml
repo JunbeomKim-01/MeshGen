@@ -508,20 +508,20 @@
                                                             <ColumnDefinition Width="6" />
                                                             <ColumnDefinition Width="*" />
                                                         </Grid.ColumnDefinitions>
-                                                        <StackPanel Grid.Column="0">
-                                                            <TextBlock Text="Radius" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                        <StackPanel Grid.Column="0" Visibility="{Binding DataContext.ElectrodePanel.Spec.IsRadiusVisible, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToVisConverter}}">
+                                                            <TextBlock Text="Radius (R)" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                                             <ui:TextBox Text="{Binding Radius, UpdateSourceTrigger=PropertyChanged}" />
                                                         </StackPanel>
-                                                        <StackPanel Grid.Column="2">
-                                                            <TextBlock Text="Width" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                        <StackPanel Grid.Column="2" Visibility="{Binding DataContext.ElectrodePanel.Spec.IsRectangle, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToVisConverter}}">
+                                                            <TextBlock Text="Width (X)" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                                             <ui:TextBox Text="{Binding Width, UpdateSourceTrigger=PropertyChanged}" />
                                                         </StackPanel>
-                                                        <StackPanel Grid.Column="4">
-                                                            <TextBlock Text="Depth" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                        <StackPanel Grid.Column="4" Visibility="{Binding DataContext.ElectrodePanel.Spec.IsRectangle, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToVisConverter}}">
+                                                            <TextBlock Text="Length (Y)" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                                             <ui:TextBox Text="{Binding Depth, UpdateSourceTrigger=PropertyChanged}" />
                                                         </StackPanel>
                                                         <StackPanel Grid.Column="6">
-                                                            <TextBlock Text="Thickness" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock Text="Height (Z)" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                                             <ui:TextBox Text="{Binding Thickness, UpdateSourceTrigger=PropertyChanged}" />
                                                         </StackPanel>
                                                     </Grid>
@@ -535,7 +535,7 @@
                                                             <ColumnDefinition Width="*" />
                                                         </Grid.ColumnDefinitions>
                                                         <StackPanel Grid.Column="0">
-                                                            <TextBlock Text="σ (S/m)" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                            <TextBlock Text="? (S/m)" FontSize="10" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                                                             <ui:TextBox Text="{Binding Conductivity, UpdateSourceTrigger=PropertyChanged}" />
                                                         </StackPanel>
                                                         <StackPanel Grid.Column="2">
@@ -743,7 +743,7 @@
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="Max Points (0 = no decimation)" Style="{StaticResource FieldLabelTextStyle}" />
                                         <ui:TextBox Text="{Binding VolumeMesh.MaxPoints, UpdateSourceTrigger=PropertyChanged}"
-                                                    PlaceholderText="5000" />
+                                                    PlaceholderText="3000" />
                                     </StackPanel>
                                 </Grid>
 

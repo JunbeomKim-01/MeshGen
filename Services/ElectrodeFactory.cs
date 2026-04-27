@@ -20,9 +20,9 @@ public sealed class ElectrodeFactory
 {
     public const string LayerIndexArrayName = "LayerIndex";
 
-    public vtkPolyData CreateNeedle(ElectrodeSpec spec) => Build(spec);
+    public vtkPolyData CreateNeedle(ElectrodeSpec spec) => Build(spec, dense: true);
 
-    public vtkPolyData Build(ElectrodeSpec spec)
+    public vtkPolyData Build(ElectrodeSpec spec, bool dense = true)
     {
         var layered = BuildLayered(spec);
         if (layered.Count == 0)
@@ -40,15 +40,25 @@ public sealed class ElectrodeFactory
 
         append.Update();
 
-        // Convert all cell types (quads, polygons) to triangles before subdivision
+        // Convert all cell types (quads, polygons) to triangles. Required by subdivision and
+        // also makes the output uniformly triangular for downstream consumers.
         var globalTriangleFilter = vtkTriangleFilter.New();
         globalTriangleFilter.SetInputConnection(append.GetOutputPort());
         globalTriangleFilter.Update();
 
-        // Apply Linear Subdivision to create dense internal vertices on the faces.
+        if (!dense)
+        {
+            // Skip subdivision: ~16× fewer triangles for visualization-only consumers
+            // (placement preview, committed actor). Reduces hover-loop cost dramatically.
+            var coarse = vtkPolyData.New();
+            coarse.DeepCopy(globalTriangleFilter.GetOutput());
+            return coarse;
+        }
+
+        // Linear subdivision creates dense internal vertices needed for FEM constraint generation.
         var subdivide = vtkLinearSubdivisionFilter.New();
         subdivide.SetInputConnection(globalTriangleFilter.GetOutputPort());
-        subdivide.SetNumberOfSubdivisions(2); // Subdivide twice for dense points
+        subdivide.SetNumberOfSubdivisions(2);
         subdivide.Update();
 
         var combined = vtkPolyData.New();

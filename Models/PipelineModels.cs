@@ -190,6 +190,11 @@ public sealed class ElectrodeSpec : ObservableObject
 
     public ObservableCollection<ElectrodeLayer> Layers { get; } = new();
 
+    public bool IsCircle => Shape == ElectrodeShape.Circle;
+    public bool IsRectangle => Shape == ElectrodeShape.Rectangle;
+    public bool IsTriangle => Shape == ElectrodeShape.Triangle;
+    public bool IsRadiusVisible => Shape != ElectrodeShape.Rectangle;
+
     public double TotalThickness => Layers.Sum(layer => layer.Thickness);
 
     public double FootprintRadius
@@ -206,6 +211,7 @@ public sealed class ElectrodeSpec : ObservableObject
                 ElectrodeShape.Rectangle => Math.Max(
                     Layers.Max(layer => layer.Width),
                     Layers.Max(layer => layer.Depth)) / 2.0,
+                ElectrodeShape.Triangle => Layers.Max(layer => layer.Radius),
                 _ => Layers.Max(layer => layer.Radius)
             };
         }
@@ -236,6 +242,10 @@ public sealed class ElectrodeSpec : ObservableObject
 
     private void RaiseDerivedChanged()
     {
+        OnPropertyChanged(nameof(IsCircle));
+        OnPropertyChanged(nameof(IsRectangle));
+        OnPropertyChanged(nameof(IsTriangle));
+        OnPropertyChanged(nameof(IsRadiusVisible));
         OnPropertyChanged(nameof(TotalThickness));
         OnPropertyChanged(nameof(FootprintRadius));
         OnPropertyChanged(nameof(PrimaryColor));
