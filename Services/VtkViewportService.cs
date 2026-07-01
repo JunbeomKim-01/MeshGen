@@ -158,6 +158,61 @@ public sealed class VtkViewportService
         Render();
     }
 
+    /// <summary>
+    /// Replace (or add) the surface actor for a single ROI in place, keeping electrodes and
+    /// other ROI actors untouched. Used for incremental regeneration after contour editing.
+    /// </summary>
+    public void ReplaceRoiSurface(SurfaceMeshInfo surface)
+    {
+        if (renderer is null)
+        {
+            return;
+        }
+
+        if (roiActors.TryGetValue(surface.Roi.Id, out var existing))
+        {
+            renderer.RemoveActor(existing);
+        }
+
+        var mapper = vtkPolyDataMapper.New();
+        mapper.SetInputData(surface.PolyData);
+        mapper.ScalarVisibilityOff();
+        mapper.Update();
+
+        var actor = vtkActor.New();
+        actor.SetVisibility(1);
+        actor.PickableOn();
+        actor.SetMapper(mapper);
+        renderer.AddActor(actor);
+
+        roiActors[surface.Roi.Id] = actor;
+        roiSurfaces[surface.Roi.Id] = surface.PolyData;
+        ApplyAppearance(actor, surface.Roi);
+
+        if (externalBodyMeshId == surface.Roi.Id)
+        {
+            externalActor = actor;
+            externalSurface = surface.PolyData;
+            externalOriginalVisibility = surface.Roi.Visibility;
+            ApplyExternalVisibility();
+        }
+
+        Render();
+    }
+
+    public void RemoveRoiSurface(int roiId)
+    {
+        if (renderer is null || !roiActors.TryGetValue(roiId, out var actor))
+        {
+            return;
+        }
+
+        renderer.RemoveActor(actor);
+        roiActors.Remove(roiId);
+        roiSurfaces.Remove(roiId);
+        Render();
+    }
+
     public void SetExternalSurfaceRoi(int? roiId)
     {
         if (roiId is not int resolvedId)

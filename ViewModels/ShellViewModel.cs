@@ -420,6 +420,122 @@ public sealed class StatusBarViewModel : ObservableObject
     }
 }
 
+public enum MprEditTool
+{
+    None,
+    Paint,
+    Erase
+}
+
+public enum MprMousePhase
+{
+    Down,
+    Move,
+    Up
+}
+
+public sealed class MprPanelViewModel : ObservableObject
+{
+    private bool hasVolume;
+    private MprEditTool tool = MprEditTool.None;
+    private RoiDescriptor? activeRoi;
+    private double brushRadiusMm = 4.0;
+    private int axialSlice;
+    private int sagittalSlice;
+    private int coronalSlice;
+    private int axialMax;
+    private int sagittalMax;
+    private int coronalMax;
+
+    public bool HasVolume
+    {
+        get => hasVolume;
+        set => SetProperty(ref hasVolume, value);
+    }
+
+    public MprEditTool Tool
+    {
+        get => tool;
+        set
+        {
+            if (SetProperty(ref tool, value))
+            {
+                OnPropertyChanged(nameof(IsPaint));
+                OnPropertyChanged(nameof(IsErase));
+                OnPropertyChanged(nameof(IsNavigating));
+                OnPropertyChanged(nameof(ToolSummary));
+            }
+        }
+    }
+
+    public bool IsPaint => Tool == MprEditTool.Paint;
+
+    public bool IsErase => Tool == MprEditTool.Erase;
+
+    public bool IsNavigating => Tool == MprEditTool.None;
+
+    public string ToolSummary => Tool switch
+    {
+        MprEditTool.Paint => activeRoi is null ? "Paint (select an ROI)" : $"Painting {activeRoi.Name}",
+        MprEditTool.Erase => "Erasing",
+        _ => "Navigate / scroll slices"
+    };
+
+    public RoiDescriptor? ActiveRoi
+    {
+        get => activeRoi;
+        set
+        {
+            if (SetProperty(ref activeRoi, value))
+            {
+                OnPropertyChanged(nameof(ToolSummary));
+            }
+        }
+    }
+
+    public double BrushRadiusMm
+    {
+        get => brushRadiusMm;
+        set => SetProperty(ref brushRadiusMm, Math.Clamp(value, 0.5, 50.0));
+    }
+
+    public int AxialSlice
+    {
+        get => axialSlice;
+        set => SetProperty(ref axialSlice, value);
+    }
+
+    public int SagittalSlice
+    {
+        get => sagittalSlice;
+        set => SetProperty(ref sagittalSlice, value);
+    }
+
+    public int CoronalSlice
+    {
+        get => coronalSlice;
+        set => SetProperty(ref coronalSlice, value);
+    }
+
+    public int AxialMax
+    {
+        get => axialMax;
+        set => SetProperty(ref axialMax, value);
+    }
+
+    public int SagittalMax
+    {
+        get => sagittalMax;
+        set => SetProperty(ref sagittalMax, value);
+    }
+
+    public int CoronalMax
+    {
+        get => coronalMax;
+        set => SetProperty(ref coronalMax, value);
+    }
+}
+
 public sealed class ShellViewModel : ObservableObject
 {
     private readonly IPipelineService pipelineService;
@@ -439,6 +555,12 @@ public sealed class ShellViewModel : ObservableObject
     private StudyContext? study;
     private readonly PipelineArtifacts artifacts = new();
     private VolumeMeshResult? volumeMeshResult;
+    private readonly MprSliceService mprSliceService = new();
+    private readonly LabelMapEditor labelMapEditor = new();
+    private bool mprStrokeActive;
+    private bool mprRegenInProgress;
+    private int mprStrokeLabel;
+    private bool mprStrokeErase;
 
     public ShellViewModel(IPipelineService pipelineService, VtkViewportService viewportService)
     {
@@ -462,9 +584,11 @@ public sealed class ShellViewModel : ObservableObject
         DeformationConfig = new DeformationConfigViewModel();
         Attachment = new AttachmentPanelViewModel();
         VolumeMesh = new VolumeMeshViewModel();
+        Mpr = new MprPanelViewModel();
         StatusBar = new StatusBarViewModel();
         RoiPanel.PropertyChanged += OnRoiPanelPropertyChanged;
         ElectrodePanel.PropertyChanged += OnElectrodePanelPropertyChanged;
+        Mpr.PropertyChanged += OnMprPanelPropertyChanged;
 
         Steps = new ObservableCollection<PipelineStepViewModel>
         {
@@ -500,6 +624,11 @@ public sealed class ShellViewModel : ObservableObject
         MoveLayerUpCommand = new RelayCommand<ElectrodeLayer>(layer => MoveLayer(layer, -1), layer => layer is not null && ElectrodePanel.Spec.Layers.IndexOf(layer) > 0);
         MoveLayerDownCommand = new RelayCommand<ElectrodeLayer>(layer => MoveLayer(layer, 1), layer => layer is not null && ElectrodePanel.Spec.Layers.IndexOf(layer) >= 0 && ElectrodePanel.Spec.Layers.IndexOf(layer) < ElectrodePanel.Spec.Layers.Count - 1);
         ResetElectrodeLayersCommand = new RelayCommand(() => ElectrodePanel.Spec.ResetToDefault());
+        SetPaintToolCommand = new RelayCommand(() => Mpr.Tool = Mpr.Tool == MprEditTool.Paint ? MprEditTool.None : MprEditTool.Paint, () => Mpr.HasVolume);
+        SetEraseToolCommand = new RelayCommand(() => Mpr.Tool = Mpr.Tool == MprEditTool.Erase ? MprEditTool.None : MprEditTool.Erase, () => Mpr.HasVolume);
+        SetNavToolCommand = new RelayCommand(() => Mpr.Tool = MprEditTool.None, () => Mpr.HasVolume);
+        MprUndoCommand = new RelayCommand(MprUndo, () => labelMapEditor.CanUndo && !StatusBar.IsBusy);
+        RegenerateSurfacesCommand = new AsyncRelayCommand(BuildSurfaceAsync, () => artifacts.LabelMap is not null && !StatusBar.IsBusy);
     }
 
     public ImportViewModel Import { get; }
@@ -513,6 +642,8 @@ public sealed class ShellViewModel : ObservableObject
     public AttachmentPanelViewModel Attachment { get; }
 
     public VolumeMeshViewModel VolumeMesh { get; }
+
+    public MprPanelViewModel Mpr { get; }
 
     public StatusBarViewModel StatusBar { get; }
 
@@ -562,10 +693,222 @@ public sealed class ShellViewModel : ObservableObject
 
     public ICommand ResetElectrodeLayersCommand { get; }
 
+    public ICommand SetPaintToolCommand { get; }
+
+    public ICommand SetEraseToolCommand { get; }
+
+    public ICommand SetNavToolCommand { get; }
+
+    public ICommand MprUndoCommand { get; }
+
+    public ICommand RegenerateSurfacesCommand { get; }
+
     public void InitializeViewport(RenderWindowControl control)
     {
         viewportService.Initialize(control);
         RefreshCommandStates();
+    }
+
+    public void InitializeMpr(RenderWindowControl axial, RenderWindowControl sagittal, RenderWindowControl coronal)
+    {
+        mprSliceService.Initialize(axial, sagittal, coronal);
+    }
+
+    private void SyncMprAfterLabelMap()
+    {
+        if (artifacts.LabelMap is null)
+        {
+            Mpr.HasVolume = false;
+            return;
+        }
+
+        var rois = RoiPanel.Rois.ToList();
+        mprSliceService.SetLabelMap(artifacts.LabelMap, rois);
+        labelMapEditor.SetLabelMap(artifacts.LabelMap);
+
+        Mpr.AxialMax = Math.Max(0, mprSliceService.GetSliceCount(MprPlane.Axial) - 1);
+        Mpr.SagittalMax = Math.Max(0, mprSliceService.GetSliceCount(MprPlane.Sagittal) - 1);
+        Mpr.CoronalMax = Math.Max(0, mprSliceService.GetSliceCount(MprPlane.Coronal) - 1);
+        Mpr.AxialSlice = mprSliceService.GetSlice(MprPlane.Axial);
+        Mpr.SagittalSlice = mprSliceService.GetSlice(MprPlane.Sagittal);
+        Mpr.CoronalSlice = mprSliceService.GetSlice(MprPlane.Coronal);
+
+        Mpr.ActiveRoi ??= rois.FirstOrDefault(roi => roi.Role != RoiRole.External && roi.HasContours)
+            ?? rois.FirstOrDefault(roi => roi.HasContours);
+        Mpr.HasVolume = true;
+        RefreshCommandStates();
+    }
+
+    private void OnMprPanelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(MprPanelViewModel.AxialSlice):
+                mprSliceService.SetSlice(MprPlane.Axial, Mpr.AxialSlice);
+                break;
+            case nameof(MprPanelViewModel.SagittalSlice):
+                mprSliceService.SetSlice(MprPlane.Sagittal, Mpr.SagittalSlice);
+                break;
+            case nameof(MprPanelViewModel.CoronalSlice):
+                mprSliceService.SetSlice(MprPlane.Coronal, Mpr.CoronalSlice);
+                break;
+            case nameof(MprPanelViewModel.Tool):
+                mprSliceService.SetEditInteraction(Mpr.Tool != MprEditTool.None);
+                mprSliceService.SetBrushVisible(Mpr.Tool != MprEditTool.None);
+                RefreshCommandStates();
+                break;
+        }
+    }
+
+    public void HandleMprMouse(MprPlane plane, int displayX, int displayY, MouseButtons button, MprMousePhase phase)
+    {
+        if (!Mpr.HasVolume || Mpr.Tool == MprEditTool.None)
+        {
+            return;
+        }
+
+        if (phase == MprMousePhase.Move)
+        {
+            mprSliceService.UpdateBrushCursor(plane, displayX, displayY, Mpr.BrushRadiusMm);
+        }
+
+        if (button != MouseButtons.Left)
+        {
+            return;
+        }
+
+        switch (phase)
+        {
+            case MprMousePhase.Down:
+                BeginMprStroke(plane, displayX, displayY);
+                break;
+            case MprMousePhase.Move:
+                if (mprStrokeActive)
+                {
+                    StampAt(plane, displayX, displayY);
+                }
+                break;
+            case MprMousePhase.Up:
+                if (!mprStrokeActive)
+                {
+                    return;
+                }
+
+                mprStrokeActive = false;
+                var affected = labelMapEditor.EndStroke();
+                mprSliceService.RefreshAfterEdit();
+                Notify(MprUndoCommand);
+                _ = RegenerateEditedSurfacesAsync(affected);
+                break;
+        }
+    }
+
+    private void BeginMprStroke(MprPlane plane, int displayX, int displayY)
+    {
+        // The ROI under the cursor at stroke start becomes the edit target for the whole stroke.
+        if (!mprSliceService.TryPickVoxel(plane, displayX, displayY, out var i, out var j, out var k, out var pickedLabel))
+        {
+            return;
+        }
+
+        mprStrokeErase = Mpr.Tool == MprEditTool.Erase;
+        mprStrokeLabel = pickedLabel > 0
+            ? pickedLabel
+            : (Mpr.ActiveRoi?.Id ?? 0);
+
+        // Paint needs a target ROI; erase needs something under the cursor.
+        if (mprStrokeLabel <= 0)
+        {
+            StatusBar.Message = mprStrokeErase ? "Nothing to erase" : "Click on an ROI to paint";
+            StatusBar.Detail = "Hover an existing ROI region, then paint to extend or erase it.";
+            return;
+        }
+
+        // Reflect the picked ROI in the panel for feedback.
+        var pickedRoi = RoiPanel.Rois.FirstOrDefault(r => r.Id == mprStrokeLabel);
+        if (pickedRoi is not null)
+        {
+            Mpr.ActiveRoi = pickedRoi;
+        }
+
+        labelMapEditor.BeginStroke();
+        mprStrokeActive = true;
+        labelMapEditor.Stamp(plane, i, j, k, Mpr.BrushRadiusMm, mprStrokeLabel, mprStrokeErase);
+        mprSliceService.RefreshAfterEdit();
+    }
+
+    private void StampAt(MprPlane plane, int displayX, int displayY)
+    {
+        if (!mprSliceService.TryPickVoxel(plane, displayX, displayY, out var i, out var j, out var k, out _))
+        {
+            return;
+        }
+
+        labelMapEditor.Stamp(plane, i, j, k, Mpr.BrushRadiusMm, mprStrokeLabel, mprStrokeErase);
+        mprSliceService.RefreshAfterEdit();
+    }
+
+    private async Task RegenerateEditedSurfacesAsync(IReadOnlyCollection<int> affectedLabelIds)
+    {
+        if (study is null || artifacts.LabelMap is null || affectedLabelIds.Count == 0 || mprRegenInProgress)
+        {
+            return;
+        }
+
+        mprRegenInProgress = true;
+        try
+        {
+            var iterations = RoiPanel.ResolveExternalSmoothingIterations();
+            foreach (var labelId in affectedLabelIds)
+            {
+                var roi = RoiPanel.Rois.FirstOrDefault(r => r.Id == labelId);
+                if (roi is null)
+                {
+                    continue;
+                }
+
+                var surface = await pipelineService.BuildRoiSurfaceAsync(study, artifacts.LabelMap, roi, iterations, CancellationToken.None);
+                artifacts.SurfaceMeshes.RemoveAll(mesh => mesh.Roi.Id == labelId);
+                if (surface is null)
+                {
+                    viewportService.RemoveRoiSurface(labelId);
+                    continue;
+                }
+
+                artifacts.SurfaceMeshes.Add(surface);
+                viewportService.ReplaceRoiSurface(surface);
+
+                if (labelId == RoiPanel.SelectedExternalRoi?.Id)
+                {
+                    artifacts.ExternalSurface = surface.PolyData;
+                }
+            }
+
+            artifacts.Stats = BuildStats();
+            StatusBar.HudText = artifacts.Stats.Summary;
+            StatusBar.Message = "Surface updated from contour edit";
+            StatusBar.Detail = $"{affectedLabelIds.Count} ROI surface(s) regenerated.";
+        }
+        catch (Exception exception)
+        {
+            StatusBar.Message = "Surface regeneration failed";
+            StatusBar.Detail = exception.Message;
+        }
+        finally
+        {
+            mprRegenInProgress = false;
+        }
+    }
+
+    private void MprUndo()
+    {
+        var affected = labelMapEditor.Undo();
+        mprSliceService.RefreshAfterEdit();
+        Notify(MprUndoCommand);
+        if (affected.Count > 0)
+        {
+            _ = RegenerateEditedSurfacesAsync(affected);
+        }
     }
 
     public void HandleViewportMove(int x, int y)
@@ -661,6 +1004,10 @@ public sealed class ShellViewModel : ObservableObject
             artifacts.LabelMap = null;
             artifacts.MergedPreview = null;
             artifacts.ElectrodeMeshes.Clear();
+            mprSliceService.Clear();
+            Mpr.HasVolume = false;
+            Mpr.Tool = MprEditTool.None;
+            Mpr.ActiveRoi = null;
             InvalidateAttachment("No attachment result. Import a study and build the body surface first.");
 
             if (string.IsNullOrWhiteSpace(Import.RtssPath) || !File.Exists(Import.RtssPath))
@@ -720,6 +1067,7 @@ public sealed class ShellViewModel : ObservableObject
             }
 
             artifacts.LabelMap = await pipelineService.BuildLabelMapAsync(study, selected, ParseDouble(Import.TargetSpacing, 2.0), progress, token);
+            SyncMprAfterLabelMap();
             SetStep(1, PipelineStepStatus.Completed);
             SetStep(2, PipelineStepStatus.Ready);
             RefreshCommandStates();
@@ -1313,6 +1661,11 @@ public sealed class ShellViewModel : ObservableObject
         if (e.PropertyName is nameof(RoiDescriptor.Visibility) or nameof(RoiDescriptor.Opacity) or nameof(RoiDescriptor.Color))
         {
             viewportService.UpdateRoiAppearance(roi);
+            if (Mpr.HasVolume)
+            {
+                mprSliceService.RefreshColors(RoiPanel.Rois.ToList());
+            }
+
             artifacts.Stats = BuildStats();
             StatusBar.HudText = artifacts.Stats.Summary;
         }
@@ -1536,6 +1889,11 @@ public sealed class ShellViewModel : ObservableObject
         Notify(MoveLayerUpCommand);
         Notify(MoveLayerDownCommand);
         Notify(ResetElectrodeLayersCommand);
+        Notify(SetPaintToolCommand);
+        Notify(SetEraseToolCommand);
+        Notify(SetNavToolCommand);
+        Notify(MprUndoCommand);
+        Notify(RegenerateSurfacesCommand);
     }
 
     private static void Notify(ICommand command)

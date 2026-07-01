@@ -20,6 +20,8 @@ public interface IPipelineService
 
     Task<IReadOnlyList<SurfaceMeshInfo>> BuildSurfaceAsync(StudyContext study, vtkImageData labelMap, IReadOnlyList<RoiDescriptor> selectedRois, int externalSmoothingIterations, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken);
 
+    Task<SurfaceMeshInfo?> BuildRoiSurfaceAsync(StudyContext study, vtkImageData labelMap, RoiDescriptor roi, int externalSmoothingIterations, CancellationToken cancellationToken);
+
     Task<IReadOnlyList<vtkPolyData>> CreateElectrodesAsync(ElectrodeSpec spec, IReadOnlyList<ElectrodePlacement> placements, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken);
 
     Task<(IReadOnlyList<vtkPolyData> Electrodes, vtkPolyData MergedPreview)> SnapElectrodesAsync(
@@ -195,65 +197,11 @@ public sealed class PipelineService : IPipelineService
                 cancellationToken.ThrowIfCancellationRequested();
                 progress?.Report(new PipelineProgress { Message = $"Generating surface", Detail = roi.Name });
 
-                var threshold = vtkImageThreshold.New();
-                threshold.SetInputData(labelMap);
-                threshold.ThresholdBetween(roi.Id, roi.Id);
-                threshold.ReplaceInOn();
-                threshold.SetInValue(1);
-                threshold.ReplaceOutOn();
-                threshold.SetOutValue(0);
-                threshold.SetOutputScalarTypeToUnsignedChar();
-                threshold.Update();
-
-                var marchingCubes = vtkDiscreteMarchingCubes.New();
-                marchingCubes.SetInputConnection(threshold.GetOutputPort());
-                marchingCubes.GenerateValues(1, 1, 1);
-                marchingCubes.Update();
-
-                var isExternal = roi.Id == study.ExternalRoiId;
-                var smoothingIterations = isExternal
-                    ? Math.Max(externalSmoothingIterations, 0)
-                    : 10;
-
-                var smoother = vtkWindowedSincPolyDataFilter.New();
-                smoother.SetInputConnection(marchingCubes.GetOutputPort());
-                smoother.SetNumberOfIterations(smoothingIterations);
-                smoother.BoundarySmoothingOff();
-                smoother.FeatureEdgeSmoothingOff();
-                smoother.SetPassBand(0.15);
-                smoother.NonManifoldSmoothingOn();
-                smoother.NormalizeCoordinatesOn();
-                smoother.Update();
-
-                var decimator = vtkDecimatePro.New();
-                decimator.SetInputConnection(smoother.GetOutputPort());
-                decimator.SetTargetReduction(0.20);
-                decimator.PreserveTopologyOn();
-                decimator.Update();
-
-                var normals = vtkPolyDataNormals.New();
-                normals.SetInputConnection(decimator.GetOutputPort());
-                normals.ConsistencyOn();
-                normals.SplittingOff();
-                normals.AutoOrientNormalsOn();
-                normals.Update();
-
-                var mesh = vtkPolyData.New();
-                mesh.DeepCopy(normals.GetOutput());
-                if (mesh.GetNumberOfPoints() == 0)
+                var surface = BuildRoiSurface(study, labelMap, roi, externalSmoothingIterations);
+                if (surface is not null)
                 {
-                    continue;
+                    results.Add(surface);
                 }
-
-                FemMetadataService.TagRoiSurface(mesh, roi, isExternal);
-
-                results.Add(new SurfaceMeshInfo
-                {
-                    Roi = roi,
-                    PolyData = mesh,
-                    VertexCount = (int)mesh.GetNumberOfPoints(),
-                    TriangleCount = (int)mesh.GetNumberOfPolys()
-                });
             }
 
             progress?.Report(new PipelineProgress
@@ -264,6 +212,78 @@ public sealed class PipelineService : IPipelineService
 
             return (IReadOnlyList<SurfaceMeshInfo>)results;
         }, cancellationToken);
+    }
+
+    public Task<SurfaceMeshInfo?> BuildRoiSurfaceAsync(StudyContext study, vtkImageData labelMap, RoiDescriptor roi, int externalSmoothingIterations, CancellationToken cancellationToken)
+    {
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return BuildRoiSurface(study, labelMap, roi, externalSmoothingIterations);
+        }, cancellationToken);
+    }
+
+    private static SurfaceMeshInfo? BuildRoiSurface(StudyContext study, vtkImageData labelMap, RoiDescriptor roi, int externalSmoothingIterations)
+    {
+        var threshold = vtkImageThreshold.New();
+        threshold.SetInputData(labelMap);
+        threshold.ThresholdBetween(roi.Id, roi.Id);
+        threshold.ReplaceInOn();
+        threshold.SetInValue(1);
+        threshold.ReplaceOutOn();
+        threshold.SetOutValue(0);
+        threshold.SetOutputScalarTypeToUnsignedChar();
+        threshold.Update();
+
+        var marchingCubes = vtkDiscreteMarchingCubes.New();
+        marchingCubes.SetInputConnection(threshold.GetOutputPort());
+        marchingCubes.GenerateValues(1, 1, 1);
+        marchingCubes.Update();
+
+        var isExternal = roi.Id == study.ExternalRoiId;
+        var smoothingIterations = isExternal
+            ? Math.Max(externalSmoothingIterations, 0)
+            : 10;
+
+        var smoother = vtkWindowedSincPolyDataFilter.New();
+        smoother.SetInputConnection(marchingCubes.GetOutputPort());
+        smoother.SetNumberOfIterations(smoothingIterations);
+        smoother.BoundarySmoothingOff();
+        smoother.FeatureEdgeSmoothingOff();
+        smoother.SetPassBand(0.15);
+        smoother.NonManifoldSmoothingOn();
+        smoother.NormalizeCoordinatesOn();
+        smoother.Update();
+
+        var decimator = vtkDecimatePro.New();
+        decimator.SetInputConnection(smoother.GetOutputPort());
+        decimator.SetTargetReduction(0.20);
+        decimator.PreserveTopologyOn();
+        decimator.Update();
+
+        var normals = vtkPolyDataNormals.New();
+        normals.SetInputConnection(decimator.GetOutputPort());
+        normals.ConsistencyOn();
+        normals.SplittingOff();
+        normals.AutoOrientNormalsOn();
+        normals.Update();
+
+        var mesh = vtkPolyData.New();
+        mesh.DeepCopy(normals.GetOutput());
+        if (mesh.GetNumberOfPoints() == 0)
+        {
+            return null;
+        }
+
+        FemMetadataService.TagRoiSurface(mesh, roi, isExternal);
+
+        return new SurfaceMeshInfo
+        {
+            Roi = roi,
+            PolyData = mesh,
+            VertexCount = (int)mesh.GetNumberOfPoints(),
+            TriangleCount = (int)mesh.GetNumberOfPolys()
+        };
     }
 
     public Task<IReadOnlyList<vtkPolyData>> CreateElectrodesAsync(ElectrodeSpec spec, IReadOnlyList<ElectrodePlacement> placements, IProgress<PipelineProgress>? progress, CancellationToken cancellationToken)

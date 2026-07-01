@@ -17,6 +17,7 @@ public partial class MainWindow : FluentWindow
 {
     private readonly ShellViewModel viewModel;
     private vtkRenderWindowInteractor? interactor;
+    private readonly Dictionary<vtkRenderWindowInteractor, MprPlane> mprInteractors = new();
 
     public MainWindow()
     {
@@ -31,6 +32,12 @@ public partial class MainWindow : FluentWindow
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         viewModel.InitializeViewport(RenderControl);
+        viewModel.InitializeMpr(AxialControl, SagittalControl, CoronalControl);
+
+        WireMprInteractor(AxialControl, MprPlane.Axial);
+        WireMprInteractor(SagittalControl, MprPlane.Sagittal);
+        WireMprInteractor(CoronalControl, MprPlane.Coronal);
+
         interactor = RenderControl.RenderWindow.GetInteractor();
         if (interactor is not null)
         {
@@ -60,6 +67,52 @@ public partial class MainWindow : FluentWindow
         ViewportHost.MouseMove -= OnViewportHostMouseMove;
         ViewportHost.PreviewMouseDown -= OnViewportHostMouseDown;
         PreviewKeyDown -= OnPreviewKeyDown;
+
+        foreach (var it in mprInteractors.Keys)
+        {
+            it.LeftButtonPressEvt -= OnMprLeftDown;
+            it.MouseMoveEvt -= OnMprMouseMove;
+            it.LeftButtonReleaseEvt -= OnMprLeftUp;
+        }
+
+        mprInteractors.Clear();
+    }
+
+    private void WireMprInteractor(RenderWindowControl control, MprPlane plane)
+    {
+        var it = control.RenderWindow.GetInteractor();
+        if (it is null)
+        {
+            return;
+        }
+
+        mprInteractors[it] = plane;
+        it.LeftButtonPressEvt += OnMprLeftDown;
+        it.MouseMoveEvt += OnMprMouseMove;
+        it.LeftButtonReleaseEvt += OnMprLeftUp;
+    }
+
+    private void OnMprLeftDown(vtkObject sender, vtkObjectEventArgs e) => DispatchMpr(sender, MprMousePhase.Down);
+
+    private void OnMprMouseMove(vtkObject sender, vtkObjectEventArgs e) => DispatchMpr(sender, MprMousePhase.Move);
+
+    private void OnMprLeftUp(vtkObject sender, vtkObjectEventArgs e) => DispatchMpr(sender, MprMousePhase.Up);
+
+    private void DispatchMpr(vtkObject sender, MprMousePhase phase)
+    {
+        if (sender is not vtkRenderWindowInteractor it || !mprInteractors.TryGetValue(it, out var plane))
+        {
+            return;
+        }
+
+        var position = it.GetEventPosition();
+        if (position is null || position.Length < 2)
+        {
+            return;
+        }
+
+        // Interactor coordinates are already VTK display space (bottom-up); no flip needed.
+        viewModel.HandleMprMouse(plane, position[0], position[1], MouseButtons.Left, phase);
     }
 
     private void OnRenderMouseMove(object? sender, FormsMouseEventArgs e)

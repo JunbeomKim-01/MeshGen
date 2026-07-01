@@ -143,56 +143,199 @@
                      VerticalAlignment="Stretch"
                      HorizontalContentAlignment="Stretch"
                      VerticalContentAlignment="Stretch">
-                <Grid ClipToBounds="True"
-                      HorizontalAlignment="Stretch"
-                      VerticalAlignment="Stretch">
-                    <wfi:WindowsFormsHost x:Name="ViewportHost"
-                                          HorizontalAlignment="Stretch"
-                                          VerticalAlignment="Stretch">
-                        <vtk:RenderWindowControl x:Name="RenderControl" Dock="Fill" />
-                    </wfi:WindowsFormsHost>
+                <DockPanel LastChildFill="True">
 
-                    <Border HorizontalAlignment="Left"
-                            VerticalAlignment="Top"
-                            Margin="10"
-                            Padding="12,8"
-                            CornerRadius="12"
-                            Background="#CC181A1D"
+                    <!-- Contour editing toolbar -->
+                    <Border DockPanel.Dock="Top"
+                            Margin="4,4,4,6"
+                            Padding="10,6"
+                            CornerRadius="10"
+                            Background="{DynamicResource ControlFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                            BorderThickness="1">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal">
-                                <ui:SymbolIcon Symbol="Eye24" FontSize="14" Foreground="{StaticResource BrandAccentBrush}" />
-                                <TextBlock Text="Viewport HUD"
-                                           Margin="6,0,0,0"
-                                           FontSize="11"
-                                           FontWeight="SemiBold"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                            <TextBlock Text="{Binding StatusBar.HudText}"
-                                       FontSize="14"
+                            BorderThickness="1"
+                            Visibility="{Binding Mpr.HasVolume, Converter={StaticResource BoolToVisConverter}, FallbackValue=Collapsed}">
+                        <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <ui:Button Command="{Binding SetNavToolCommand}"
+                                       Content="Navigate"
+                                       Icon="{ui:SymbolIcon Cursor24}"
+                                       Appearance="Secondary"
+                                       Margin="0,0,6,0" />
+                            <ui:Button Command="{Binding SetPaintToolCommand}"
+                                       Content="Paint"
+                                       Icon="{ui:SymbolIcon Edit24}"
+                                       Appearance="Secondary"
+                                       Margin="0,0,6,0" />
+                            <ui:Button Command="{Binding SetEraseToolCommand}"
+                                       Content="Erase"
+                                       Icon="{ui:SymbolIcon Eraser24}"
+                                       Appearance="Secondary"
+                                       Margin="0,0,12,0" />
+
+                            <TextBlock Text="Target ROI (auto from cursor)"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,6,0"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <ComboBox ItemsSource="{Binding RoiPanel.Rois}"
+                                      SelectedItem="{Binding Mpr.ActiveRoi}"
+                                      DisplayMemberPath="Name"
+                                      IsEnabled="False"
+                                      Width="150"
+                                      Margin="0,0,12,0" />
+
+                            <TextBlock Text="Brush"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,6,0"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            <Slider Minimum="0.5"
+                                    Maximum="30"
+                                    Value="{Binding Mpr.BrushRadiusMm}"
+                                    Width="110"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding Mpr.BrushRadiusMm, StringFormat='{}{0:F1} mm'}"
+                                       VerticalAlignment="Center"
+                                       Margin="6,0,12,0"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+                            <ui:Button Command="{Binding MprUndoCommand}"
+                                       Content="Undo"
+                                       Icon="{ui:SymbolIcon ArrowUndo24}"
+                                       Appearance="Secondary"
+                                       Margin="0,0,6,0" />
+                            <ui:Button Command="{Binding RegenerateSurfacesCommand}"
+                                       Content="Regenerate Mesh"
+                                       Icon="{ui:SymbolIcon ArrowSync24}"
+                                       Appearance="Primary"
+                                       Margin="0,0,12,0" />
+
+                            <TextBlock Text="{Binding Mpr.ToolSummary}"
+                                       VerticalAlignment="Center"
                                        FontWeight="SemiBold"
-                                       Margin="0,6,0,0"
-                                       TextWrapping="Wrap"
-                                       MaxWidth="360" />
-                        </StackPanel>
+                                       Foreground="{StaticResource BrandAccentBrush}" />
+                        </WrapPanel>
                     </Border>
 
-                    <StackPanel HorizontalAlignment="Right"
-                                VerticalAlignment="Top"
-                                Margin="10"
-                                Orientation="Horizontal">
-                        <ui:Button Command="{Binding ToggleViewportPickCommand}"
-                                   Content="{Binding ElectrodePanel.PlacementButtonText}"
-                                   Icon="{ui:SymbolIcon TargetArrow24}"
-                                   Appearance="Secondary"
-                                   Margin="0,0,8,0" />
-                        <ui:Button Command="{Binding ResetCameraCommand}"
-                                   Content="Reset Camera"
-                                   Icon="{ui:SymbolIcon FullScreenMaximize24}"
-                                   Appearance="Secondary" />
-                    </StackPanel>
-                </Grid>
+                    <!-- 2x2 viewport grid: Axial / Sagittal / Coronal / 3D -->
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Axial -->
+                        <Border Grid.Row="0" Grid.Column="0" Margin="2" BorderThickness="1"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" ClipToBounds="True">
+                            <DockPanel LastChildFill="True">
+                                <Grid DockPanel.Dock="Bottom" Margin="6,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Axial" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                    <Slider Grid.Column="1" Minimum="0" Maximum="{Binding Mpr.AxialMax}"
+                                            Value="{Binding Mpr.AxialSlice}" VerticalAlignment="Center" />
+                                </Grid>
+                                <wfi:WindowsFormsHost x:Name="AxialHost">
+                                    <vtk:RenderWindowControl x:Name="AxialControl" Dock="Fill" />
+                                </wfi:WindowsFormsHost>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Sagittal -->
+                        <Border Grid.Row="0" Grid.Column="1" Margin="2" BorderThickness="1"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" ClipToBounds="True">
+                            <DockPanel LastChildFill="True">
+                                <Grid DockPanel.Dock="Bottom" Margin="6,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Sagittal" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                    <Slider Grid.Column="1" Minimum="0" Maximum="{Binding Mpr.SagittalMax}"
+                                            Value="{Binding Mpr.SagittalSlice}" VerticalAlignment="Center" />
+                                </Grid>
+                                <wfi:WindowsFormsHost x:Name="SagittalHost">
+                                    <vtk:RenderWindowControl x:Name="SagittalControl" Dock="Fill" />
+                                </wfi:WindowsFormsHost>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Coronal -->
+                        <Border Grid.Row="1" Grid.Column="0" Margin="2" BorderThickness="1"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" ClipToBounds="True">
+                            <DockPanel LastChildFill="True">
+                                <Grid DockPanel.Dock="Bottom" Margin="6,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Coronal" FontWeight="SemiBold" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                    <Slider Grid.Column="1" Minimum="0" Maximum="{Binding Mpr.CoronalMax}"
+                                            Value="{Binding Mpr.CoronalSlice}" VerticalAlignment="Center" />
+                                </Grid>
+                                <wfi:WindowsFormsHost x:Name="CoronalHost">
+                                    <vtk:RenderWindowControl x:Name="CoronalControl" Dock="Fill" />
+                                </wfi:WindowsFormsHost>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- 3D -->
+                        <Border Grid.Row="1" Grid.Column="1" Margin="2" BorderThickness="1"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" ClipToBounds="True">
+                            <Grid ClipToBounds="True">
+                                <wfi:WindowsFormsHost x:Name="ViewportHost"
+                                                      HorizontalAlignment="Stretch"
+                                                      VerticalAlignment="Stretch">
+                                    <vtk:RenderWindowControl x:Name="RenderControl" Dock="Fill" />
+                                </wfi:WindowsFormsHost>
+
+                                <Border HorizontalAlignment="Left"
+                                        VerticalAlignment="Top"
+                                        Margin="10"
+                                        Padding="12,8"
+                                        CornerRadius="12"
+                                        Background="#CC181A1D"
+                                        BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                        BorderThickness="1">
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <ui:SymbolIcon Symbol="Eye24" FontSize="14" Foreground="{StaticResource BrandAccentBrush}" />
+                                            <TextBlock Text="3D"
+                                                       Margin="6,0,0,0"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding StatusBar.HudText}"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold"
+                                                   Margin="0,6,0,0"
+                                                   TextWrapping="Wrap"
+                                                   MaxWidth="300" />
+                                    </StackPanel>
+                                </Border>
+
+                                <StackPanel HorizontalAlignment="Right"
+                                            VerticalAlignment="Top"
+                                            Margin="10"
+                                            Orientation="Horizontal">
+                                    <ui:Button Command="{Binding ToggleViewportPickCommand}"
+                                               Content="{Binding ElectrodePanel.PlacementButtonText}"
+                                               Icon="{ui:SymbolIcon TargetArrow24}"
+                                               Appearance="Secondary"
+                                               Margin="0,0,8,0" />
+                                    <ui:Button Command="{Binding ResetCameraCommand}"
+                                               Content="Reset Camera"
+                                               Icon="{ui:SymbolIcon FullScreenMaximize24}"
+                                               Appearance="Secondary" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </DockPanel>
             </ui:Card>
 
             <GridSplitter Grid.Column="3"
