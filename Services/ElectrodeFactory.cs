@@ -18,7 +18,7 @@ public sealed class ElectrodeLayerMesh
 
 public sealed class ElectrodeFactory
 {
-    public const string LayerIndexArrayName = "LayerIndex";
+    public const string LayerIndexArrayName = FemArrayNames.LayerIndex;
 
     public vtkPolyData CreateNeedle(ElectrodeSpec spec) => Build(spec, dense: true);
 

@@ -10,6 +10,8 @@ public interface IMeshExportService
     void WriteStl(vtkPolyData surface, string path);
 
     void WritePoly(vtkPolyData surface, string path);
+
+    byte[] ExportStlToBytes(vtkPolyData surface);
 }
 
 public sealed class MeshExportService : IMeshExportService
@@ -33,6 +35,28 @@ public sealed class MeshExportService : IMeshExportService
         writer.SetInputData(triangulated);
         writer.SetFileTypeToBinary();
         writer.Write();
+    }
+
+    public byte[] ExportStlToBytes(vtkPolyData surface)
+    {
+        if (surface.GetNumberOfPoints() == 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"meshgen_{Guid.NewGuid():N}.stl");
+        try
+        {
+            WriteStl(surface, tempPath);
+            return File.ReadAllBytes(tempPath);
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
     }
 
     public void WritePoly(vtkPolyData surface, string path)

@@ -12,8 +12,6 @@ namespace MeshGenLite.Engine.Geometry;
 /// </summary>
 public static class MeshConverter
 {
-    private const string LayerIndexArrayName = "LayerIndex";
-
     /// <summary>
     /// Converts a <see cref="vtkPolyData"/> surface mesh to a <see cref="MeshData"/>.
     /// </summary>
@@ -41,23 +39,31 @@ public static class MeshConverter
         {
             polys.InitTraversal();
             var idList = vtkIdList.New();
-            var cellScalars = polyData.GetCellData()?.GetScalars();
-            if (cellScalars is not null && cellScalars.GetNumberOfTuples() < polyData.GetNumberOfCells())
-            {
-                cellScalars = null;
-            }
+            var layerScalars = ResolveCellArray(polyData, FemArrayNames.LayerIndex);
+            var regionScalars = ResolveCellArray(polyData, FemArrayNames.RegionId);
+            var materialScalars = ResolveCellArray(polyData, FemArrayNames.MaterialId);
+            var boundaryScalars = ResolveCellArray(polyData, FemArrayNames.BoundaryMarker);
 
             var cellId = 0;
-            var layerIndices = cellScalars is null ? null : new List<int>();
+            var layerIndices = layerScalars is null ? null : new List<int>();
+            var regionIds = regionScalars is null ? null : new List<int>();
+            var materialIds = materialScalars is null ? null : new List<int>();
+            var boundaryMarkers = boundaryScalars is null ? null : new List<int>();
             while (polys.GetNextCell(idList) != 0)
             {
-                var layerIndex = cellScalars is null ? 0 : (int)Math.Round(cellScalars.GetTuple1(cellId));
+                var layerIndex = ReadCellValue(layerScalars, cellId);
+                var regionId = ReadCellValue(regionScalars, cellId);
+                var materialId = ReadCellValue(materialScalars, cellId);
+                var boundaryMarker = ReadCellValue(boundaryScalars, cellId);
                 if (idList.GetNumberOfIds() == 3)
                 {
                     mesh.Indices.Add((int)idList.GetId(0));
                     mesh.Indices.Add((int)idList.GetId(1));
                     mesh.Indices.Add((int)idList.GetId(2));
                     layerIndices?.Add(layerIndex);
+                    regionIds?.Add(regionId);
+                    materialIds?.Add(materialId);
+                    boundaryMarkers?.Add(boundaryMarker);
                 }
                 else if (idList.GetNumberOfIds() == 4)
                 {
@@ -66,10 +72,16 @@ public static class MeshConverter
                     mesh.Indices.Add((int)idList.GetId(1));
                     mesh.Indices.Add((int)idList.GetId(2));
                     layerIndices?.Add(layerIndex);
+                    regionIds?.Add(regionId);
+                    materialIds?.Add(materialId);
+                    boundaryMarkers?.Add(boundaryMarker);
                     mesh.Indices.Add((int)idList.GetId(0));
                     mesh.Indices.Add((int)idList.GetId(2));
                     mesh.Indices.Add((int)idList.GetId(3));
                     layerIndices?.Add(layerIndex);
+                    regionIds?.Add(regionId);
+                    materialIds?.Add(materialId);
+                    boundaryMarkers?.Add(boundaryMarker);
                 }
 
                 cellId++;
@@ -78,6 +90,18 @@ public static class MeshConverter
             if (layerIndices is not null && layerIndices.Count == mesh.TriangleCount)
             {
                 mesh.CellLayerIndices = layerIndices;
+            }
+            if (regionIds is not null && regionIds.Count == mesh.TriangleCount)
+            {
+                mesh.CellRegionIds = regionIds;
+            }
+            if (materialIds is not null && materialIds.Count == mesh.TriangleCount)
+            {
+                mesh.CellMaterialIds = materialIds;
+            }
+            if (boundaryMarkers is not null && boundaryMarkers.Count == mesh.TriangleCount)
+            {
+                mesh.CellBoundaryMarkers = boundaryMarkers;
             }
         }
 
@@ -108,12 +132,10 @@ public static class MeshConverter
         }
 
         var triangles = vtkCellArray.New();
-        var layerScalars = mesh.CellLayerIndices is null ? null : vtkIntArray.New();
-        if (layerScalars is not null)
-        {
-            layerScalars.SetName(LayerIndexArrayName);
-            layerScalars.SetNumberOfComponents(1);
-        }
+        var layerScalars = CreateOptionalCellArray(mesh.CellLayerIndices, FemArrayNames.LayerIndex);
+        var regionScalars = CreateOptionalCellArray(mesh.CellRegionIds, FemArrayNames.RegionId);
+        var materialScalars = CreateOptionalCellArray(mesh.CellMaterialIds, FemArrayNames.MaterialId);
+        var boundaryScalars = CreateOptionalCellArray(mesh.CellBoundaryMarkers, FemArrayNames.BoundaryMarker);
 
         for (var i = 0; i + 2 < mesh.Indices.Count; i += 3)
         {
@@ -132,12 +154,11 @@ public static class MeshConverter
             triangle.GetPointIds().SetId(1, mesh.Indices[i + 1]);
             triangle.GetPointIds().SetId(2, mesh.Indices[i + 2]);
             triangles.InsertNextCell(triangle);
-            if (layerScalars is not null)
-            {
-                var triangleId = i / 3;
-                var layerIndex = triangleId < mesh.CellLayerIndices!.Count ? mesh.CellLayerIndices[triangleId] : 0;
-                layerScalars.InsertNextTuple1(layerIndex);
-            }
+            var triangleId = i / 3;
+            InsertOptionalCellValue(layerScalars, mesh.CellLayerIndices, triangleId);
+            InsertOptionalCellValue(regionScalars, mesh.CellRegionIds, triangleId);
+            InsertOptionalCellValue(materialScalars, mesh.CellMaterialIds, triangleId);
+            InsertOptionalCellValue(boundaryScalars, mesh.CellBoundaryMarkers, triangleId);
         }
 
         var polyData = vtkPolyData.New();
@@ -145,7 +166,20 @@ public static class MeshConverter
         polyData.SetPolys(triangles);
         if (layerScalars is not null)
         {
+            polyData.GetCellData().AddArray(layerScalars);
             polyData.GetCellData().SetScalars(layerScalars);
+        }
+        if (regionScalars is not null)
+        {
+            polyData.GetCellData().AddArray(regionScalars);
+        }
+        if (materialScalars is not null)
+        {
+            polyData.GetCellData().AddArray(materialScalars);
+        }
+        if (boundaryScalars is not null)
+        {
+            polyData.GetCellData().AddArray(boundaryScalars);
         }
 
         // Set normals if available
@@ -163,6 +197,52 @@ public static class MeshConverter
         }
 
         return polyData;
+    }
+
+    private static vtkDataArray? ResolveCellArray(vtkPolyData polyData, string name)
+    {
+        var cellData = polyData.GetCellData();
+        var array = cellData.GetArray(name);
+        if (array is not null && array.GetNumberOfTuples() >= polyData.GetNumberOfCells())
+        {
+            return array;
+        }
+
+        var scalars = cellData.GetScalars();
+        return scalars is not null &&
+               scalars.GetName() == name &&
+               scalars.GetNumberOfTuples() >= polyData.GetNumberOfCells()
+            ? scalars
+            : null;
+    }
+
+    private static int ReadCellValue(vtkDataArray? array, int cellId)
+        => array is null || array.GetNumberOfTuples() <= cellId
+            ? 0
+            : (int)Math.Round(array.GetTuple1(cellId));
+
+    private static vtkIntArray? CreateOptionalCellArray(IReadOnlyList<int>? values, string name)
+    {
+        if (values is null)
+        {
+            return null;
+        }
+
+        var array = vtkIntArray.New();
+        array.SetName(name);
+        array.SetNumberOfComponents(1);
+        return array;
+    }
+
+    private static void InsertOptionalCellValue(vtkIntArray? array, IReadOnlyList<int>? values, int triangleId)
+    {
+        if (array is null || values is null)
+        {
+            return;
+        }
+
+        var value = triangleId < values.Count ? values[triangleId] : 0;
+        array.InsertNextTuple1(value);
     }
 
     /// <summary>

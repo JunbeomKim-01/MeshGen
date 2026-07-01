@@ -726,7 +726,7 @@
                                                Style="{StaticResource SectionHeaderTextStyle}"
                                                Margin="8,0,0,0" />
                                 </StackPanel>
-                                <TextBlock Text="Generate a tetrahedral mesh (Delaunay3D) from the final surface, or export the surface to STL / POLY."
+                                <TextBlock Text="Generate a tetrahedral mesh (Delaunay3D) from the final surface, or export STL / POLY / FEM package files."
                                            Style="{StaticResource SectionCaptionTextStyle}" />
 
                                 <Grid>
@@ -760,6 +760,11 @@
                                                Margin="0,0,6,6" />
                                     <ui:Button Command="{Binding ExportPolyCommand}"
                                                Content="Export POLY"
+                                               Icon="{ui:SymbolIcon Save24}"
+                                               Appearance="Secondary"
+                                               Margin="0,0,6,6" />
+                                    <ui:Button Command="{Binding ExportFemCommand}"
+                                               Content="Export FEM Package"
                                                Icon="{ui:SymbolIcon Save24}"
                                                Appearance="Secondary"
                                                Margin="0,0,6,6" />

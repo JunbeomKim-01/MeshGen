@@ -245,6 +245,8 @@ public sealed class PipelineService : IPipelineService
                     continue;
                 }
 
+                FemMetadataService.TagRoiSurface(mesh, roi, isExternal);
+
                 results.Add(new SurfaceMeshInfo
                 {
                     Roi = roi,

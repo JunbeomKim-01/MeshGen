@@ -95,6 +95,12 @@ public sealed class ElectrodePlacementController
             currentPreview.WorldPosition);
 
         var layerColors = cachedLayerColors ?? electrodeFactory.GetLayerColors(spec);
+        FemMetadataService.TagElectrodeSurface(
+            currentPreview.WorldMesh,
+            placement.Id,
+            spec,
+            currentPreview.WorldPosition,
+            placement.WorldNormal);
         viewportService.AddCommittedElectrode(placement.Id, currentPreview.WorldMesh, color, 1.0, layerColors);
         viewportService.HidePlacementPreview();
         currentPreview = null;

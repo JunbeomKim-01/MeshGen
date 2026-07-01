@@ -167,6 +167,14 @@ public sealed class ElasticDeformationService : IElasticDeformationService
 
             var worldMesh = vtkPolyData.New();
             worldMesh.DeepCopy(filter.GetOutput());
+            var normal = placement.WorldNormal;
+            if (normal.LengthSquared < 1e-8)
+            {
+                normal = new System.Windows.Media.Media3D.Vector3D(0, 0, 1);
+            }
+            normal.Normalize();
+            var basePoint = placement.SurfacePoint + (normal * placement.Clearance);
+            FemMetadataService.TagElectrodeSurface(worldMesh, placement.Id, spec, basePoint, normal);
             return MeshConverter.FromVtkPolyData(worldMesh);
         }
     }

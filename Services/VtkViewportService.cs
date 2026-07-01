@@ -438,6 +438,9 @@ public sealed class VtkViewportService
     public IReadOnlyCollection<vtkPolyData> GetCommittedElectrodeSurfaces()
         => committedElectrodeSurfaces.Values;
 
+    public IReadOnlyDictionary<int, vtkPolyData> GetCommittedElectrodeSurfacesById()
+        => committedElectrodeSurfaces;
+
     public void ShowElectrodes(IEnumerable<vtkPolyData> electrodes, WpfColor color)
     {
         ClearCommittedElectrodes();

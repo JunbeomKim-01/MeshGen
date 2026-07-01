@@ -23,6 +23,12 @@ public sealed class MeshData
 
     public List<int>? CellLayerIndices { get; set; }
 
+    public List<int>? CellRegionIds { get; set; }
+
+    public List<int>? CellMaterialIds { get; set; }
+
+    public List<int>? CellBoundaryMarkers { get; set; }
+
     public List<Vector3>? Normals { get; set; }
 
     public int TriangleCount => Indices.Count / 3;
@@ -37,6 +43,21 @@ public sealed class MeshData
         if (CellLayerIndices is not null)
         {
             copy.CellLayerIndices = new List<int>(CellLayerIndices);
+        }
+
+        if (CellRegionIds is not null)
+        {
+            copy.CellRegionIds = new List<int>(CellRegionIds);
+        }
+
+        if (CellMaterialIds is not null)
+        {
+            copy.CellMaterialIds = new List<int>(CellMaterialIds);
+        }
+
+        if (CellBoundaryMarkers is not null)
+        {
+            copy.CellBoundaryMarkers = new List<int>(CellBoundaryMarkers);
         }
 
         if (Normals is not null)

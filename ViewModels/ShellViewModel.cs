@@ -433,6 +433,7 @@ public sealed class ShellViewModel : ObservableObject
     private readonly ElectrodePlacementController placementController;
     private readonly IVolumeMeshService volumeMeshService;
     private readonly IMeshExportService meshExportService;
+    private readonly IFemExportService femExportService;
     private readonly Progress<PipelineProgress> progress;
     private CancellationTokenSource? currentCts;
     private StudyContext? study;
@@ -452,6 +453,7 @@ public sealed class ShellViewModel : ObservableObject
         placementController = new ElectrodePlacementController(meshHitTestService, electrodeFactory, transformBuilder, viewportService);
         volumeMeshService = new VolumeMeshService();
         meshExportService = new MeshExportService();
+        femExportService = new FemExportService();
         progress = new Progress<PipelineProgress>(OnProgressReported);
 
         Import = new ImportViewModel();
@@ -492,6 +494,7 @@ public sealed class ShellViewModel : ObservableObject
         GenerateVolumeMeshCommand = new AsyncRelayCommand(GenerateVolumeMeshAsync, CanGenerateVolumeMesh);
         ExportStlCommand = new RelayCommand(ExportStl, CanExportSurface);
         ExportPolyCommand = new RelayCommand(ExportPoly, CanExportSurface);
+        ExportFemCommand = new AsyncRelayCommand(ExportFemPackageAsync, CanExportFemPackage);
         AddElectrodeLayerCommand = new RelayCommand(AddElectrodeLayer);
         RemoveElectrodeLayerCommand = new RelayCommand<ElectrodeLayer>(RemoveElectrodeLayer, layer => layer is not null && ElectrodePanel.Spec.Layers.Count > 1);
         MoveLayerUpCommand = new RelayCommand<ElectrodeLayer>(layer => MoveLayer(layer, -1), layer => layer is not null && ElectrodePanel.Spec.Layers.IndexOf(layer) > 0);
@@ -546,6 +549,8 @@ public sealed class ShellViewModel : ObservableObject
     public ICommand ExportStlCommand { get; }
 
     public ICommand ExportPolyCommand { get; }
+
+    public ICommand ExportFemCommand { get; }
 
     public ICommand AddElectrodeLayerCommand { get; }
 
@@ -858,6 +863,60 @@ public sealed class ShellViewModel : ObservableObject
         });
     }
 
+    private async Task ExportFemPackageAsync()
+    {
+        var surface = ResolveExportSurface();
+        if (surface is null)
+        {
+            return;
+        }
+
+        using var dialog = new FolderBrowserDialog
+        {
+            InitialDirectory = ResolveInitialDirectory(study?.CtSeriesPath ?? Environment.CurrentDirectory),
+            Description = "Select a folder for the FEM package files."
+        };
+
+        if (dialog.ShowDialog() != DialogResult.OK)
+        {
+            return;
+        }
+
+        await RunTrackedAsync(async token =>
+        {
+            SetStep(6, PipelineStepStatus.Running);
+            if (volumeMeshResult is null)
+            {
+                VolumeMesh.Summary = "Generating volume mesh for FEM export...";
+                volumeMeshResult = await volumeMeshService.GenerateAsync(
+                    surface,
+                    VolumeMesh.ResolveAlpha(),
+                    VolumeMesh.ResolveMaxPoints(),
+                    progress,
+                    token);
+            }
+
+            token.ThrowIfCancellationRequested();
+            VolumeMesh.Summary = "Writing FEM package...";
+            var result = femExportService.Export(new FemExportRequest
+            {
+                VolumeGrid = volumeMeshResult.Grid,
+                BodySurface = artifacts.DeformedBodySurface ?? artifacts.ExternalSurface,
+                RoiSurfaces = artifacts.SurfaceMeshes.ToList(),
+                Electrodes = BuildFemElectrodeExportInfos(),
+                ElectrodeSpec = ElectrodePanel.Spec,
+                OutputDirectory = dialog.SelectedPath,
+                BaseName = BuildDefaultExportFileName("fem")
+            });
+
+            VolumeMesh.Summary = $"FEM package ready · {result.Summary}";
+            StatusBar.Message = "FEM package exported";
+            StatusBar.Detail = result.ManifestPath;
+            SetStep(6, PipelineStepStatus.Completed);
+            RefreshCommandStates();
+        });
+    }
+
     private void ExportStl()
     {
         var surface = ResolveExportSurface();
@@ -986,6 +1045,39 @@ public sealed class ShellViewModel : ObservableObject
 
     private bool CanExportSurface()
         => ResolveExportSurface() is not null && !StatusBar.IsBusy;
+
+    private bool CanExportFemPackage()
+        => ResolveExportSurface() is not null && !StatusBar.IsBusy;
+
+    private IReadOnlyList<FemElectrodeExportInfo> BuildFemElectrodeExportInfos()
+    {
+        var surfaces = viewportService.GetCommittedElectrodeSurfacesById();
+        var result = new List<FemElectrodeExportInfo>();
+        foreach (var placement in electrodeRepository.Placements)
+        {
+            if (!surfaces.TryGetValue(placement.Id, out var surface))
+            {
+                continue;
+            }
+
+            var normal = placement.WorldNormal;
+            if (normal.LengthSquared < 1e-8)
+            {
+                normal = new System.Windows.Media.Media3D.Vector3D(0, 0, 1);
+            }
+            normal.Normalize();
+
+            result.Add(new FemElectrodeExportInfo
+            {
+                PlacementId = placement.Id,
+                Surface = surface,
+                BasePoint = placement.SurfacePoint + (normal * placement.Clearance),
+                Normal = normal
+            });
+        }
+
+        return result;
+    }
 
     private void InvalidateVolumeMesh(string summaryText)
     {
@@ -1438,6 +1530,7 @@ public sealed class ShellViewModel : ObservableObject
         Notify(GenerateVolumeMeshCommand);
         Notify(ExportStlCommand);
         Notify(ExportPolyCommand);
+        Notify(ExportFemCommand);
         Notify(AddElectrodeLayerCommand);
         Notify(RemoveElectrodeLayerCommand);
         Notify(MoveLayerUpCommand);

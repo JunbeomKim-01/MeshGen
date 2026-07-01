@@ -2,11 +2,12 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net6.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <StartupObject>MeshGenLite.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,6 +16,8 @@
     <PackageReference Include="Kitware.VTK" Version="9.1.2022.222" />
     <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="WPF-UI" Version="3.0.5" />
+    <PackageReference Include="ModelContextProtocol" Version="0.3.0-preview.4" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>
